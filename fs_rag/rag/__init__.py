@@ -116,7 +116,7 @@ class RAGPipeline:
             file_path = result.metadata.get("file_path", "unknown")
             snippet = result.content[:300] + "..." if len(result.content) > 300 else result.content
 
-            result_text = f"[Document {i+1}: {file_path}]\n{snippet}\n"
+            result_text = f"[Documento {i+1}: {file_path}]\n{snippet}\n"
 
             if current_length + len(result_text) > max_context_length:
                 break
