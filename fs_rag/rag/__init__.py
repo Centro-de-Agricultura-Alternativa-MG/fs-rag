@@ -8,7 +8,12 @@ from fs_rag.search import HybridSearchEngine, SearchResult
 from pathlib import Path
 import tiktoken
 
+import click
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
 logger = get_logger(__name__)
+console = Console()
 
 
 class LLMProvider(ABC):
@@ -159,6 +164,9 @@ class RAGPipeline:
 
         # --- Token counting ---
         tokens = len(encoding.encode(prompt))
+
+        console.print(Panel(prompt, title="Prompt"))
+
 
         logger.info(f"Model used for tokenization: {model}")
         logger.info(f"Token estimate: {tokens}")
