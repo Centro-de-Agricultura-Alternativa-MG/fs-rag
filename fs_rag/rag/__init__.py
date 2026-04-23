@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from fs_rag.core import get_config, get_logger
 from fs_rag.search import HybridSearchEngine, SearchResult
 from pathlib import Path
+import tiktoken
 
 logger = get_logger(__name__)
 
@@ -127,11 +128,40 @@ class RAGPipeline:
 
     def _build_prompt(self, question: str, context: str) -> str:
         """Build the prompt for the LLM."""
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+        DEFAULT_MODEL = "gpt-4o-mini"
+
+        # Load template
         template_path = Path(__file__).resolve().parents[1] / "system-instructions" / "main.txt"
         prompt_template = template_path.read_text(encoding="utf-8")
 
-        prompt = prompt_template.format(context=context, question=question) 
-        logger.info(f"Prompt used: {prompt}")
+        prompt = prompt_template.format(context=context, question=question)
+
+        # --- Model selection ---
+        openai_model = os.getenv("OPENAI_LLM_MODEL")
+        ollama_model = os.getenv("OLLAMA_LLM_MODEL")
+
+        if openai_model:
+            model = openai_model
+        elif ollama_model:
+            model = ollama_model
+        else:
+            model = DEFAULT_MODEL
+
+        # --- Encoding selection with fallback ---
+        try:
+            encoding = tiktoken.encoding_for_model(model)
+        except KeyError:
+            # fallback if model not supported
+            encoding = tiktoken.encoding_for_model(DEFAULT_MODEL)
+
+        # --- Token counting ---
+        tokens = len(encoding.encode(prompt))
+
+        logger.info(f"Model used for tokenization: {model}")
+        logger.info(f"Token estimate: {tokens}")
 
         return prompt
 
