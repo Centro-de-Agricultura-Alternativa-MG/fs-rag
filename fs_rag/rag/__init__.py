@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 
 from fs_rag.core import get_config, get_logger
 from fs_rag.search import HybridSearchEngine, SearchResult
+from pathlib import Path
 
 logger = get_logger(__name__)
 
@@ -126,14 +127,14 @@ class RAGPipeline:
 
     def _build_prompt(self, question: str, context: str) -> str:
         """Build the prompt for the LLM."""
-        return f"""You are a helpful assistant that answers questions based on provided documents.
+        template_path = Path(__file__).resolve().parents[1] / "system-instructions" / "main.txt"
+        prompt_template = template_path.read_text(encoding="utf-8")
 
-Context:
-{context}
+        prompt = prompt_template.format(context=context, question=question) 
+        logger.info(f"Prompt used: {prompt}")
 
-Question: {question}
+        return prompt
 
-Based on the provided context, please answer the question accurately and concisely. If the answer is not in the context, say so."""
 
     def answer_question(
         self,
