@@ -5,6 +5,8 @@ from typing import Optional
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+import subprocess
+
 from fs_rag.core import get_logger
 
 logger = get_logger(__name__)
@@ -88,7 +90,7 @@ class DocxProcessor(DocumentProcessor):
     """Processor for Microsoft Word documents."""
 
     def can_process(self, file_path: Path) -> bool:
-        return file_path.suffix.lower() in {".docx", ".doc"}
+        return file_path.suffix.lower() in {".docx"}
 
     def extract_text(self, file_path: Path) -> str:
         try:
@@ -104,6 +106,71 @@ class DocxProcessor(DocumentProcessor):
             logger.error(f"Error extracting text from DOCX {file_path}: {e}")
             return ""
 
+
+class DocProcessor(DocumentProcessor):
+    """Processor for Legacy Microsoft Word documents (.doc)."""
+
+    def can_process(self, file_path: Path) -> bool:
+        return file_path.suffix.lower() in {".doc"}
+
+    def extract_text(self, file_path: Path) -> str:
+        # 1️⃣ Tenta antiword (mais comum)
+        try:
+            result = subprocess.run(
+                ["antiword", str(file_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True
+            )
+            return result.stdout.decode("utf-8", errors="ignore")
+        except FileNotFoundError:
+            logger.warning("antiword not installed, trying next fallback...")
+        except Exception as e:
+            logger.warning(f"antiword failed for {file_path}: {e}")
+
+        # 2️⃣ Tenta catdoc
+        try:
+            result = subprocess.run(
+                ["catdoc", str(file_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True
+            )
+            return result.stdout.decode("utf-8", errors="ignore")
+        except FileNotFoundError:
+            logger.warning("catdoc not installed, trying next fallback...")
+        except Exception as e:
+            logger.warning(f"catdoc failed for {file_path}: {e}")
+
+        # 3️⃣ Fallback: converter via LibreOffice → docx
+        try:
+            subprocess.run(
+                [
+                    "libreoffice",
+                    "--headless",
+                    "--convert-to", "docx",
+                    "--outdir", str(file_path.parent),
+                    str(file_path)
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True
+            )
+
+            converted = file_path.with_suffix(".docx")
+
+            if converted.exists():
+                from docx import Document
+                doc = Document(converted)
+                return "\n".join(p.text for p in doc.paragraphs)
+
+        except FileNotFoundError:
+            logger.error("LibreOffice not installed. Cannot process .doc file.")
+        except Exception as e:
+            logger.error(f"LibreOffice conversion failed for {file_path}: {e}")
+
+        logger.error(f"All extraction methods failed for {file_path}")
+        return ""
 
 class CSVProcessor(DocumentProcessor):
     """Processor for CSV files."""
@@ -180,6 +247,7 @@ class ProcessorFactory:
     _processors = [
         PDFProcessor(),
         DocxProcessor(),
+        DocProcessor(),
         CSVProcessor(),
         JSONProcessor(),
         ImageProcessor(),
