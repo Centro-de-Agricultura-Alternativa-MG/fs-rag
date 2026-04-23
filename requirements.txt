@@ -1,0 +1,38 @@
+# Core dependencies
+pydantic
+python-dotenv
+
+# Document processing
+PyPDF2
+python-docx
+markdown
+pillow
+
+# Data handling
+pandas
+numpy
+
+# Vector DB and Search
+chromadb
+qdrant-client
+
+# Embeddings
+ollama
+openai
+
+# SQLite ORM
+sqlalchemy
+
+# CLI and logging
+click
+rich
+loguru
+
+# FastAPI for skill server
+fastapi
+uvicorn
+pydantic-settings
+
+# Testing
+pytest
+pytest-asyncio

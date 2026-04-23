@@ -1,0 +1,36 @@
+{
+  "name": "FS-RAG",
+  "version": "0.1.0",
+  "description": "Filesystem Indexing and RAG-Powered Q&A for OpenWebUI",
+  "author": "Your Name",
+  "category": "tools",
+  "tags": ["search", "rag", "documents", "indexing"],
+  "installation": {
+    "type": "docker",
+    "image": "fs-rag:latest",
+    "port": 8000,
+    "environment": {
+      "VECTOR_DB_TYPE": "chromadb",
+      "EMBEDDINGS_TYPE": "ollama",
+      "LLM_TYPE": "ollama"
+    }
+  },
+  "endpoints": {
+    "search": {
+      "method": "POST",
+      "path": "/search",
+      "description": "Search indexed documents"
+    },
+    "ask": {
+      "method": "POST",
+      "path": "/ask",
+      "description": "Ask a question using RAG"
+    },
+    "index": {
+      "method": "POST",
+      "path": "/index",
+      "description": "Index a directory"
+    }
+  },
+  "documentation": "https://github.com/yourusername/fs-rag/blob/main/README.md"
+}

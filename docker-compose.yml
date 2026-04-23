@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: fs-rag-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      OLLAMA_MODELS: /root/.ollama/models
+    # Pull models on startup (optional)
+    # Command: ollama pull nomic-embed-text && ollama pull mistral
+
+  fs-rag:
+    build: .
+    container_name: fs-rag-skill
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - /path/to/documents:/documents:ro  # Mount your documents directory
+    environment:
+      VECTOR_DB_TYPE: chromadb
+      EMBEDDINGS_TYPE: ollama
+      LLM_TYPE: ollama
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_LLM_BASE_URL: http://ollama:11434
+      LOG_LEVEL: INFO
+    depends_on:
+      - ollama
+    networks:
+      - fs-rag-net
+
+volumes:
+  ollama_data:
+
+networks:
+  fs-rag-net:
+    driver: bridge
