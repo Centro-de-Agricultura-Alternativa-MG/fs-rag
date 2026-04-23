@@ -10,6 +10,10 @@ from fs_rag.core.embeddings import get_embeddings_provider
 from fs_rag.core.vector_db import get_vector_db
 from fs_rag.processor import ProcessorFactory, DocumentChunk
 
+from datetime import datetime
+import time
+from typing import Optional, Callable
+
 logger = get_logger(__name__)
 
 
@@ -127,18 +131,19 @@ class FilesystemIndexer:
         force_reindex: bool = False,
         progress_callback: Optional[Callable] = None
     ) -> dict:
-        """Index all files in a directory."""
+        """Index all files in a directory with detailed logging."""
         root_dir = Path(root_dir)
         if not root_dir.exists():
             raise ValueError(f"Directory does not exist: {root_dir}")
 
-        logger.info(f"Starting indexing of {root_dir}")
+        start_time = time.time()
+        logger.info(f"[START] Indexing directory: {root_dir} at {datetime.now().isoformat()}")
 
         # Scan for files
+        scan_start = time.time()
         files = self._scan_directory(root_dir)
-        logger.info(f"Found {len(files)} processable files")
+        logger.info(f"[SCAN] Found {len(files)} processable files in {time.time() - scan_start:.2f}s")
 
-        # Get connection
         conn = sqlite3.connect(self.db_path)
 
         stats = {
@@ -149,58 +154,104 @@ class FilesystemIndexer:
         }
 
         try:
-            for file_path in files:
-                file_id = self._get_file_hash(file_path)
+            for idx, file_path in enumerate(files, start=1):
+                file_start = time.time()
+                logger.info(f"[FILE {idx}/{len(files)}] Processing: {file_path}")
 
-                # Check if already indexed
-                cursor = conn.execute("SELECT is_indexed FROM files WHERE id = ?", (file_id,))
-                existing = cursor.fetchone()
+                try:
+                    file_id = self._get_file_hash(file_path)
 
-                if existing and existing[0] and not force_reindex:
-                    logger.debug(f"Skipping already indexed file: {file_path}")
-                    continue
+                    # Check if already indexed
+                    logger.debug(f"[CHECK] Checking index status for: {file_path}")
+                    cursor = conn.execute("SELECT is_indexed FROM files WHERE id = ?", (file_id,))
+                    existing = cursor.fetchone()
 
-                # Process file
-                chunks = self._process_file(file_path, progress_callback)
-                if not chunks:
+                    if existing and existing[0] and not force_reindex:
+                        logger.info(f"[SKIP] Already indexed: {file_path}")
+                        continue
+
+                    # Process file
+                    process_start = time.time()
+                    logger.info(f"[PROCESS] Extracting chunks from: {file_path}")
+                    chunks = self._process_file(file_path, progress_callback)
+
+                    if not chunks:
+                        logger.error(f"[ERROR] No chunks created for: {file_path}")
+                        stats["errors"] += 1
+                        continue
+
+                    logger.info(f"[PROCESS DONE] {len(chunks)} chunks in {time.time() - process_start:.2f}s")
+
+                    # Embedding
+                    embed_start = time.time()
+                    logger.info(f"[EMBED] Generating embeddings for: {file_path}")
+                    embeddings = self.embeddings.embed_batch([c.content for c in chunks])
+                    logger.info(f"[EMBED DONE] Completed in {time.time() - embed_start:.2f}s")
+
+                    # Store in vector DB
+                    store_start = time.time()
+                    logger.info(f"[STORE] Saving embeddings to vector DB for: {file_path}")
+
+                    chunk_ids = [f"{file_id}:{i}" for i in range(len(chunks))]
+                    self.vector_db.add(
+                        ids=chunk_ids,
+                        embeddings=embeddings,
+                        metadatas=[c.metadata for c in chunks],
+                        documents=[c.content for c in chunks]
+                    )
+
+                    logger.info(f"[STORE DONE] Stored in {time.time() - store_start:.2f}s")
+
+                    # Update metadata DB
+                    db_start = time.time()
+                    logger.debug(f"[DB] Updating metadata for: {file_path}")
+
+                    cursor = conn.execute("SELECT id FROM files WHERE id = ?", (file_id,))
+                    if cursor.fetchone():
+                        conn.execute(
+                            "UPDATE files SET is_indexed = 1, indexed_time = ? WHERE id = ?",
+                            (datetime.now().timestamp(), file_id)
+                        )
+                    else:
+                        conn.execute(
+                            """INSERT INTO files 
+                            (id, path, size, modified_time, indexed_time, content_hash, is_indexed) 
+                            VALUES (?, ?, ?, ?, ?, ?, 1)""",
+                            (
+                                file_id,
+                                str(file_path),
+                                file_path.stat().st_size,
+                                file_path.stat().st_mtime,
+                                datetime.now().timestamp(),
+                                file_id
+                            )
+                        )
+
+                    logger.debug(f"[DB DONE] Metadata updated in {time.time() - db_start:.2f}s")
+
+                    # Stats
+                    stats["files_processed"] += 1
+                    stats["chunks_created"] += len(chunks)
+                    stats["documents_embedded"] += len(chunks)
+
+                    logger.info(
+                        f"[FILE DONE] {file_path} | total_time={time.time() - file_start:.2f}s"
+                    )
+
+                except Exception as e:
+                    logger.exception(f"[ERROR] Failed processing {file_path}: {e}")
                     stats["errors"] += 1
-                    continue
-
-                # Store in vector DB
-                chunk_ids = [f"{file_id}:{i}" for i in range(len(chunks))]
-                embeddings = self.embeddings.embed_batch([c.content for c in chunks])
-
-                self.vector_db.add(
-                    ids=chunk_ids,
-                    embeddings=embeddings,
-                    metadatas=[c.metadata for c in chunks],
-                    documents=[c.content for c in chunks]
-                )
-
-                # Update metadata DB
-                cursor = conn.execute("SELECT id FROM files WHERE id = ?", (file_id,))
-                if cursor.fetchone():
-                    conn.execute(
-                        "UPDATE files SET is_indexed = 1, indexed_time = ? WHERE id = ?",
-                        (datetime.now().timestamp(), file_id)
-                    )
-                else:
-                    conn.execute(
-                        "INSERT INTO files (id, path, size, modified_time, indexed_time, content_hash, is_indexed) VALUES (?, ?, ?, ?, ?, ?, 1)",
-                        (file_id, str(file_path), file_path.stat().st_size, file_path.stat().st_mtime, datetime.now().timestamp(), file_id)
-                    )
-
-                stats["files_processed"] += 1
-                stats["chunks_created"] += len(chunks)
-                stats["documents_embedded"] += len(chunks)
 
             conn.commit()
+
         finally:
             conn.close()
 
-        logger.info(f"Indexing complete: {stats}")
-        return stats
+        total_time = time.time() - start_time
+        logger.info(f"[END] Indexing complete in {total_time:.2f}s | stats={stats}")
 
+        return stats
+        
     def get_index_stats(self) -> dict:
         """Get statistics about the index."""
         conn = sqlite3.connect(self.db_path)
