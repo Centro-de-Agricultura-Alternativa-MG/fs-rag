@@ -7,6 +7,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from rich.markup import escape
 
 from fs_rag.core import get_config, get_logger
 from fs_rag.indexer import FilesystemIndexer
@@ -118,16 +119,20 @@ def ask(question: str, method: str, top_k: int, sources: bool):
             include_sources=sources
         )
 
-        console.print(Panel(response["answer"], title="Answer"))
+        # Escape answer
+        console.print(Panel(escape(response["answer"]), title="Answer"))
 
         if sources and response.get("sources"):
             console.print("\n[cyan]Sources:[/cyan]")
             for i, source in enumerate(response["sources"], 1):
-                console.print(f"[cyan]{i}. {source['file']}[/cyan] (score: {source['score']})")
-                console.print(f"   {source['preview']}...\n")
+                file = escape(source["file"])
+                preview = escape(source["preview"])
+
+                console.print(f"[cyan]{i}. {file}[/cyan] (score: {source['score']})")
+                console.print(f"   {preview}...\n")
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
         logger.error(f"Question answering failed: {e}")
         exit(1)
 
