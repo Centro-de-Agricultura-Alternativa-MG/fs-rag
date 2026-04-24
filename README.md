@@ -2,6 +2,8 @@
 
 A modular, maintainable Python-based skill for OpenWebUI/OpenClaw that enables fast filesystem indexing with semantic search and AI-powered question answering over document collections.
 
+> ⚠️ **Disclaimer:** This project was developed with the assistance of LLM tools and GitHub Copilot.
+
 ## 🎯 Features
 
 - **Recursive filesystem indexing** - Scan and index entire directory trees
