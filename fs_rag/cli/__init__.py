@@ -116,7 +116,8 @@ def ask(question: str, method: str, top_k: int, sources: bool):
             question,
             top_k=top_k,
             search_method=method,
-            include_sources=sources
+            include_sources=sources,
+            request_type='cli'
         )
 
         # Escape answer

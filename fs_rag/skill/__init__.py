@@ -133,7 +133,8 @@ async def ask(request: AskRequest):
             request.question,
             top_k=request.top_k,
             search_method=request.method,
-            include_sources=request.include_sources
+            include_sources=request.include_sources,
+            request_type='skill'
         )
 
         sources = []

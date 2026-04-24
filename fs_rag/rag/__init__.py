@@ -130,15 +130,21 @@ class RAGPipeline:
 
         return "\n".join(context_parts)
 
-    def _build_prompt(self, question: str, context: str) -> str:
+    def _build_prompt(self, question: str, context: str , request_type: str) -> str:
         """Build the prompt for the LLM."""
         import os
         from dotenv import load_dotenv
         load_dotenv()
         DEFAULT_MODEL = "gpt-4o-mini"
 
+        system_instructions = 'default.txt'
+        
+        if request_type:
+            system_instructions = f'{request_type}.txt'
+
+
         # Load template
-        template_path = Path(__file__).resolve().parents[1] / "system-instructions" / "main.txt"
+        template_path = Path(__file__).resolve().parents[1] / "system-instructions" / f"{system_instructions}"
         prompt_template = template_path.read_text(encoding="utf-8")
 
         prompt = prompt_template.format(context=context, question=question)
@@ -179,7 +185,8 @@ class RAGPipeline:
         top_k: int = 5,
         search_method: str = "hybrid",
         include_sources: bool = True,
-        max_tokens: int = 512
+        max_tokens: int = 512,
+        request_type: str = "default"
     ) -> dict:
         """
         Answer a question using the RAG pipeline.
@@ -216,7 +223,7 @@ class RAGPipeline:
         context = self._format_context(search_results)
 
         # Build and execute prompt
-        prompt = self._build_prompt(question, context)
+        prompt = self._build_prompt(question, context , request_type)
 
         try:
             answer = self.llm.generate(prompt, max_tokens=max_tokens)
