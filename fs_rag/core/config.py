@@ -40,6 +40,7 @@ class Config(BaseSettings):
     ollama_model: str = "nomic-embed-text"
     openai_api_key: Optional[str] = None
     openai_embedding_model: str = "text-embedding-3-small"
+    ocr_use_gpu: bool = False
 
     # LLM Configuration
     llm_type: LLMType = LLMType.OLLAMA

@@ -4,7 +4,10 @@ from pathlib import Path
 from typing import Optional
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-
+import numpy as np
+from dotenv import load_dotenv
+import os
+load_dotenv()
 import subprocess
 
 from fs_rag.core import get_logger
@@ -62,28 +65,130 @@ class TextProcessor(DocumentProcessor):
 
 
 class PDFProcessor(DocumentProcessor):
-    """Processor for PDF files."""
+    """Processor for PDF files with OCR fallback for scanned PDFs."""
 
     def can_process(self, file_path: Path) -> bool:
         return file_path.suffix.lower() == ".pdf"
 
-    def extract_text(self, file_path: Path) -> str:
+    def _extract_with_pypdf2(self, file_path: Path) -> tuple[str, bool]:
+        """
+        Try to extract text using PyPDF2.
+        Returns: (extracted_text, success_flag)
+        """
         try:
             from PyPDF2 import PdfReader
         except ImportError:
-            logger.error("PyPDF2 not installed. Install with: pip install PyPDF2")
-            return ""
+            logger.debug("PyPDF2 not installed")
+            return "", False
 
         try:
             text = []
             with open(file_path, "rb") as f:
                 reader = PdfReader(f)
                 for page in reader.pages:
-                    text.append(page.extract_text())
-            return "\n".join(text)
+                    extracted = page.extract_text()
+                    if extracted and extracted.strip():
+                        text.append(extracted)
+            
+            combined_text = "\n".join(text)
+            
+            # Check if extraction was successful (at least 10 chars)
+            if len(combined_text.strip()) > 10:
+                logger.debug(f"PyPDF2 extraction successful: {len(combined_text)} chars")
+                return combined_text, True
+            else:
+                logger.debug(f"PyPDF2 extraction returned minimal text, likely scanned PDF")
+                return "", False
+                
         except Exception as e:
-            logger.error(f"Error extracting text from PDF {file_path}: {e}")
+            logger.debug(f"PyPDF2 extraction failed for {file_path}: {e}")
+            return "", False
+
+    def _extract_with_ocr(self, file_path: Path) -> str:
+        """
+        Extract text from PDF using OCR (fallback for scanned PDFs).
+        Uses pdf2image + EasyOCR for performance.
+        """
+        try:
+            from pdf2image import convert_from_path
+        except ImportError:
+            logger.warning("pdf2image not installed. Cannot perform OCR.")
             return ""
+
+        try:
+            import easyocr
+        except ImportError:
+            logger.warning("EasyOCR not installed. Cannot perform OCR.")
+            return ""
+
+        try:
+            logger.info(f"Starting OCR extraction for {file_path.name}")
+            
+            # Convert PDF pages to images (limit to first 50 pages for performance)
+            images = convert_from_path(str(file_path), first_page=1, last_page=50)
+            
+            if not images:
+                logger.warning(f"No images extracted from {file_path}")
+                return ""
+            
+            logger.debug(f"Converted {len(images)} PDF pages to images")
+            
+            def str_to_bool(value: str) -> bool:
+                return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+            use_gpu = str_to_bool(os.getenv("OCR_USE_GPU", "false"))
+
+            # Initialize OCR reader (lazy load)
+            reader = easyocr.Reader(['pt', 'en'], gpu=use_gpu)
+            
+            all_text = []
+            for page_num, image in enumerate(images, 1):
+                try:
+                    img_array = np.array(image)
+                    results = reader.readtext(img_array, detail=0)
+                    page_text = "\n".join(results)
+                    if page_text.strip():
+                        all_text.append(f"[Page {page_num}]\n{page_text}")
+                    
+                    if page_num % 10 == 0:
+                        logger.debug(f"Processed {page_num} pages")
+                        
+                except Exception as e:
+                    logger.warning(f"OCR failed for page {page_num}: {e}")
+                    continue
+            
+            combined = "\n".join(all_text)
+            logger.info(f"OCR extraction complete: {len(combined)} chars from {len(images)} pages")
+            return combined
+            
+        except Exception as e:
+            logger.error(f"OCR extraction failed for {file_path}: {e}")
+            return ""
+
+    def extract_text(self, file_path: Path) -> str:
+        """
+        Extract text from PDF with intelligent fallback.
+        1. Try PyPDF2 (fast, works for text PDFs)
+        2. If minimal text, try OCR (slower, works for scanned PDFs)
+        """
+        logger.debug(f"Extracting text from PDF: {file_path}")
+        
+        # Try PyPDF2 first (fast path)
+        text, success = self._extract_with_pypdf2(file_path)
+        
+        if success:
+            return text
+        
+        # Fallback to OCR for scanned PDFs
+        logger.info(f"PyPDF2 failed, trying OCR for {file_path.name}")
+        ocr_text = self._extract_with_ocr(file_path)
+        
+        if ocr_text:
+            return ocr_text
+        
+        # Both methods failed
+        logger.error(f"Failed to extract text from {file_path} with both PyPDF2 and OCR")
+        return ""
 
 
 class DocxProcessor(DocumentProcessor):
