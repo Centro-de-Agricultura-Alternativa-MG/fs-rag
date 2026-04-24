@@ -179,7 +179,7 @@ class FilesystemTreeBuilder:
 
         tree = self._build_tree_structure(paths, max_depth)
 
-        lines = ["📁 Indexed Filesystem Structure:"]
+        lines = ["Indexed Filesystem Structure:"]
         lines.extend(self._tree_to_string(tree))
 
         if include_git_info:
@@ -201,7 +201,7 @@ class FilesystemTreeBuilder:
             path_obj = Path(file_path)
             by_dir[str(path_obj.parent)].append(path_obj.name)
 
-        lines = ["📂 Relevant Files Structure:"]
+        lines = ["Estrutura de arquivos relevantes:"]
         for directory in sorted(by_dir.keys()):
             lines.append(f"\n{directory}/")
             for filename in sorted(by_dir[directory]):
