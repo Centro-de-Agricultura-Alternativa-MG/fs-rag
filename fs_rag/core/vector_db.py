@@ -191,14 +191,14 @@ class QdrantVectorDB(VectorDB):
 
         vector = embedding.tolist() if isinstance(embedding, np.ndarray) else embedding
 
-        results = self.client.search(
+        results = self.client.query_points(
             collection_name=self.collection_name,
-            query_vector=vector,
+            query=vector,
             limit=top_k
         )
 
         formatted_results = []
-        for result in results:
+        for result in results.points:
             formatted_results.append({
                 "id": str(result.id),
                 "document": result.payload.get("document", ""),

@@ -4,6 +4,7 @@ from typing import Optional
 from abc import ABC, abstractmethod
 
 from fs_rag.core import get_config, get_logger
+from fs_rag.core.context_tree import format_context_with_tree
 from fs_rag.search import HybridSearchEngine, SearchResult
 from pathlib import Path
 import tiktoken
@@ -112,23 +113,28 @@ class RAGPipeline:
         else:
             raise ValueError(f"Unknown LLM type: {llm_type}")
 
-    def _format_context(self, search_results: list[SearchResult], max_context_length: int = 2000) -> str:
+    def _format_context(self, search_results: list[SearchResult], max_context_length: int = 2000, include_file_tree: bool = True) -> str:
         """Format search results into context for the LLM."""
         context_parts = []
         current_length = 0
+        retrieved_files = []
 
         for i, result in enumerate(search_results):
             file_path = result.metadata.get("file_path", "unknown")
+            retrieved_files.append(file_path)
             snippet = f"{result.content} [CHUNK TRUNCADA]"
             result_text = f"[Documento {i+1}: {file_path}]\n{snippet}\n"
-
-            #if current_length + len(result_text) > max_context_length:
-            #    break
 
             context_parts.append(result_text)
             current_length += len(result_text)
 
-        return "\n".join(context_parts)
+        base_context = "\n".join(context_parts)
+
+        # Enhance with filesystem tree context
+        if include_file_tree and retrieved_files:
+            base_context = format_context_with_tree(base_context, retrieved_files, max_tree_lines=20)
+
+        return base_context
 
     def _build_prompt(self, question: str, context: str , request_type: str) -> str:
         """Build the prompt for the LLM."""
@@ -186,7 +192,8 @@ class RAGPipeline:
         search_method: str = "hybrid",
         include_sources: bool = True,
         max_tokens: int = 512,
-        request_type: str = "default"
+        request_type: str = "default",
+        include_file_tree: bool = True
     ) -> dict:
         """
         Answer a question using the RAG pipeline.
@@ -220,7 +227,7 @@ class RAGPipeline:
             }
 
         # Format context
-        context = self._format_context(search_results)
+        context = self._format_context(search_results, include_file_tree=include_file_tree)
 
         # Build and execute prompt
         prompt = self._build_prompt(question, context , request_type)
