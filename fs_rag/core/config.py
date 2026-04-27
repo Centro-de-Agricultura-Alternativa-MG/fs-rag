@@ -58,6 +58,8 @@ class Config(BaseSettings):
     # Search Configuration
     search_top_k: int = 5
     search_score_threshold: float = 0.5
+    rag_search_optimizer: bool = True
+    rag_optimizer_max_tokens: int = 32
 
     # Application Configuration
     log_level: str = "INFO"

@@ -184,6 +184,29 @@ class RAGPipeline:
 
         return prompt
 
+    def rag_optimize(
+        self,
+        question: str
+    )-> str:
+
+        config = get_config()
+
+        request_type = 'rag-opt'
+
+        max_tokens = config.rag_optimizer_max_tokens
+
+        # Build and execute prompt
+        prompt = self._build_prompt(question, '' , request_type)
+
+
+        try:
+            answer = self.llm.generate(prompt, max_tokens=max_tokens)
+        except Exception as e:
+            logger.error(f"Failed to optimize RAG search query {e}")
+            #fallback
+            return question
+
+        return answer
 
     def answer_question(
         self,
@@ -208,14 +231,25 @@ class RAGPipeline:
         Returns:
             Dictionary with answer, sources, and metadata
         """
+
+        config = get_config()
+
         logger.info(f"Answering question: {question}")
+
+        rag_question = question
+
+        if config.rag_search_optimizer:
+            rag_question = self.rag_optimize(question)
+        
+        logger.info(f"RAG search: {rag_question}")
 
         # Retrieve relevant documents
         search_results = self.search_engine.search(
-            question,
+            rag_question,
             top_k=top_k,
             method=search_method
         )
+            
 
         if not search_results:
             logger.warning("No search results found")
