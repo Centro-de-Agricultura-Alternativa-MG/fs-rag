@@ -8,6 +8,7 @@ from fs_rag.core.context_tree import format_context_with_tree
 from fs_rag.search import HybridSearchEngine, SearchResult
 from pathlib import Path
 import tiktoken
+config = get_config()
 
 import click
 from rich.console import Console
@@ -138,9 +139,6 @@ class RAGPipeline:
 
     def _build_prompt(self, question: str, context: str , request_type: str) -> str:
         """Build the prompt for the LLM."""
-        import os
-        from dotenv import load_dotenv
-        load_dotenv()
         DEFAULT_MODEL = "gpt-4o-mini"
 
         system_instructions = 'default.txt'
@@ -156,8 +154,8 @@ class RAGPipeline:
         prompt = prompt_template.format(context=context, question=question)
 
         # --- Model selection ---
-        openai_model = os.getenv("OPENAI_LLM_MODEL")
-        ollama_model = os.getenv("OLLAMA_LLM_MODEL")
+        openai_model = config.openai_llm_model
+        ollama_model = config.ollama_llm_model
 
         if openai_model:
             model = openai_model
@@ -188,8 +186,6 @@ class RAGPipeline:
         self,
         question: str
     )-> str:
-
-        config = get_config()
 
         request_type = 'rag-opt'
 
@@ -231,8 +227,6 @@ class RAGPipeline:
         Returns:
             Dictionary with answer, sources, and metadata
         """
-
-        config = get_config()
 
         logger.info(f"Answering question: {question}")
 

@@ -152,11 +152,7 @@ class PDFProcessor(DocumentProcessor):
                 return ""
             
             logger.debug(f"Converted {len(images)} PDF pages to images")
-            
-            def str_to_bool(value: str) -> bool:
-                return str(value).strip().lower() in ("1", "true", "yes", "on")
-
-            use_gpu = str_to_bool(os.getenv("OCR_USE_GPU", "false"))
+            use_gpu = config.ocr_use_gpu
 
             # Initialize OCR reader (lazy load)
             reader = easyocr.Reader(['pt', 'en'], gpu=use_gpu)
