@@ -317,9 +317,6 @@ class FilesystemIndexer:
             chunks = []
             for i, chunk_text in enumerate(chunks_text):
                 
-                print(f"{chunk_text}")
-                print("-=====================================-")
-
                 chunk = DocumentChunk(
                     content=chunk_text,
                     source_file=file_path,
