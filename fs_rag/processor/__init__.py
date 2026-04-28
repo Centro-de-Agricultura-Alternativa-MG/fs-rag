@@ -10,7 +10,8 @@ import os
 load_dotenv()
 import subprocess
 
-from fs_rag.core import get_logger
+from fs_rag.core import get_logger , get_config
+config = get_config()
 
 logger = get_logger(__name__)
 
@@ -23,6 +24,21 @@ class DocumentChunk:
     chunk_index: int
     metadata: dict
 
+
+def format_path(path):
+    path = str(path)
+    result = ""
+
+    prefix = config.filepath_prefix_to_remove 
+    path = path.replace(f"{prefix}", "")
+
+    for ch in path:
+        if ch == "/":
+            result += " "
+        else:
+            result += ch
+    result += "  "
+    return result
 
 class DocumentProcessor(ABC):
     """Base class for document processors."""
@@ -37,16 +53,20 @@ class DocumentProcessor(ABC):
         """Extract text from the document."""
         pass
 
-    def chunk_text(self, text: str, chunk_size: int = 512, chunk_overlap: int = 50) -> list[str]:
+    def chunk_text(self, file_path: str,text: str, chunk_size: int = 512, chunk_overlap: int = 50) -> list[str]:
         """Split text into overlapping chunks."""
         chunks = []
         if len(text) <= chunk_size:
             return [text]
 
+        formated_file_path = ''
+        if config.enable_filepath_injection:     
+            formated_file_path = format_path(file_path)
+
         for i in range(0, len(text), chunk_size - chunk_overlap):
-            chunk = text[i : i + chunk_size]
+            chunk = formated_file_path + text[i : i + chunk_size]
             if chunk.strip():
-                chunks.append(chunk)
+                chunks.append(chunk)        
         return chunks
 
 

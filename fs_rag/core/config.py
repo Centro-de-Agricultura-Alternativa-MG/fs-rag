@@ -54,6 +54,8 @@ class Config(BaseSettings):
     index_batch_size: int = 32
     chunk_size: int = 512
     chunk_overlap: int = 50
+    enable_filepath_injection: bool = True
+    filepath_prefix_to_remove: str = ''
 
     # Search Configuration
     search_top_k: int = 5

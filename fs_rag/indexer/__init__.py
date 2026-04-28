@@ -308,6 +308,7 @@ class FilesystemIndexer:
                 return []
 
             chunks_text = processor.chunk_text(
+                file_path,
                 text,
                 chunk_size=self.config.chunk_size,
                 chunk_overlap=self.config.chunk_overlap
@@ -315,6 +316,10 @@ class FilesystemIndexer:
 
             chunks = []
             for i, chunk_text in enumerate(chunks_text):
+                
+                print(f"{chunk_text}")
+                print("-=====================================-")
+
                 chunk = DocumentChunk(
                     content=chunk_text,
                     source_file=file_path,
