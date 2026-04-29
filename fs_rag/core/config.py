@@ -25,6 +25,14 @@ class LLMType(str, Enum):
     OPENAI = "openai"
 
 
+class ParallelStrategy(str, Enum):
+    """Supported parallel processing strategies."""
+    SEQUENTIAL = "sequential"
+    THREADS = "threads"
+    PROCESSES = "processes"
+    ASYNC = "async"
+
+
 class Config(BaseSettings):
     """Application configuration from environment variables."""
 
@@ -56,6 +64,19 @@ class Config(BaseSettings):
     chunk_overlap: int = 50
     enable_filepath_injection: bool = True
     filepath_prefix_to_remove: str = ''
+
+    # Parallel Processing Configuration
+    parallel_processing_enabled: bool = False
+    parallel_workers: int = 4
+    parallel_strategy: ParallelStrategy = ParallelStrategy.SEQUENTIAL
+    preserve_chunk_order: bool = True
+    progress_log_interval: int = 10
+
+    # Distributed Processing Configuration (Remote Workers)
+    distributed_processing_enabled: bool = False
+    remote_worker_urls: str = ""  # Comma-separated URLs
+    remote_worker_timeout: int = 30
+    remote_worker_retries: int = 2
 
     # Search Configuration
     search_top_k: int = 5

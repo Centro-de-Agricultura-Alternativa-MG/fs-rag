@@ -1,18 +1,20 @@
 """Filesystem indexer for building document databases."""
 
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Callable, List
 import sqlite3
 from datetime import datetime
+import time
 
 from fs_rag.core import get_config, get_logger
 from fs_rag.core.embeddings import get_embeddings_provider
 from fs_rag.core.vector_db import get_vector_db
 from fs_rag.processor import ProcessorFactory, DocumentChunk
-
-from datetime import datetime
-import time
-from typing import Optional, Callable
+from fs_rag.indexer.strategy import ProcessingStrategy
+from fs_rag.indexer.local import LocalSequentialStrategy
+from fs_rag.indexer.parallel import ThreadPoolStrategy, ProcessPoolStrategy
+from fs_rag.indexer.distributed import RemoteWorkerStrategy
+from fs_rag.core.config import ParallelStrategy
 
 logger = get_logger(__name__)
 
@@ -26,6 +28,43 @@ class FilesystemIndexer:
         self.vector_db = get_vector_db()
         self.db_path = self.config.index_dir / "index.db"
         self._init_db()
+        self.strategy = self._create_strategy()
+
+    def _create_strategy(self) -> ProcessingStrategy:
+        """Create appropriate processing strategy based on configuration.
+        
+        Returns:
+            ProcessingStrategy instance
+        """
+        # Check if distributed processing is enabled
+        if self.config.distributed_processing_enabled:
+            logger.info("[STRATEGY] Using RemoteWorkerStrategy (distributed)")
+            try:
+                return RemoteWorkerStrategy(
+                    self.config, self.embeddings, self.vector_db, logger
+                )
+            except ValueError as e:
+                logger.warning(f"[STRATEGY] Failed to initialize distributed strategy: {e}")
+                logger.info("[STRATEGY] Falling back to parallel strategy")
+
+        # Check if parallel processing is enabled
+        if self.config.parallel_processing_enabled:
+            if self.config.parallel_strategy == ParallelStrategy.PROCESSES:
+                logger.info("[STRATEGY] Using ProcessPoolStrategy (parallel processes)")
+                return ProcessPoolStrategy(
+                    self.config, self.embeddings, self.vector_db, logger
+                )
+            else:  # threads or async (we use threads for now)
+                logger.info("[STRATEGY] Using ThreadPoolStrategy (parallel threads)")
+                return ThreadPoolStrategy(
+                    self.config, self.embeddings, self.vector_db, logger
+                )
+
+        # Default to sequential processing
+        logger.info("[STRATEGY] Using LocalSequentialStrategy (sequential)")
+        return LocalSequentialStrategy(
+            self.config, self.embeddings, self.vector_db, logger
+        )
 
     def _init_db(self) -> None:
         """Initialize SQLite database for metadata."""
@@ -454,46 +493,60 @@ class FilesystemIndexer:
         }
 
         try:
-            for idx, file_path in enumerate(files, start=1):
-                file_start = time.time()
-                file_id = self._get_file_hash(file_path)
+            # Use strategy to process files in parallel/sequential/distributed manner
+            processing_results = self.strategy.process_files(
+                files=files,
+                file_hasher=self._get_file_hash,
+                process_file_func=self._process_file,
+                progress_callback=progress_callback,
+                skip_file_ids=completed_files,
+            )
 
-                # Skip if already completed in this session
-                if file_id in completed_files:
-                    logger.info(f"[FILE {idx}/{len(files)}] SKIP (already processed): {file_path}")
+            # Process results and store in vector DB and metadata DB
+            for result in processing_results:
+                file_id = result.file_id
+                file_path = result.file_path
+
+                if result.skipped:
+                    logger.debug(f"[SKIPPED] {file_path}")
                     stats["skipped"] += 1
                     continue
 
-                logger.info(f"[FILE {idx}/{len(files)}] Processing: {file_path}")
+                if result.status == "failed":
+                    logger.error(f"[ERROR] Failed to process {file_path}: {result.error_message}")
+                    self._mark_file_progress(
+                        conn, session_id, file_id, file_path, "failed", result.error_message
+                    )
+                    stats["errors"] += 1
+                    # Batch commit for error handling
+                    if self._batch_commit(conn, batch_size=5, current_count=stats["errors"] + stats["files_processed"]):
+                        logger.debug(f"[CHECKPOINT] Committed after error")
+                    continue
 
+                # Process successful result
                 try:
+                    chunks = result.chunks
+
+                    if not chunks:
+                        logger.error(f"[ERROR] No chunks in result for: {file_path}")
+                        self._mark_file_progress(conn, session_id, file_id, file_path, "failed", "No chunks created")
+                        stats["errors"] += 1
+                        continue
+
                     # Check if already indexed globally
                     logger.debug(f"[CHECK] Checking index status for: {file_path}")
                     cursor = conn.execute("SELECT is_indexed FROM files WHERE id = ?", (file_id,))
                     existing = cursor.fetchone()
 
                     if existing and existing[0] and not force_reindex:
-                        logger.info(f"[SKIP] Already indexed: {file_path}")
+                        logger.info(f"[SKIP] Already indexed globally: {file_path}")
                         self._mark_file_progress(conn, session_id, file_id, file_path, "completed")
                         stats["skipped"] += 1
                         continue
 
-                    # Process file
-                    process_start = time.time()
-                    logger.info(f"[PROCESS] Extracting chunks from: {file_path}")
-                    chunks = self._process_file(file_path, progress_callback)
-
-                    if not chunks:
-                        logger.error(f"[ERROR] No chunks created for: {file_path}")
-                        self._mark_file_progress(conn, session_id, file_id, file_path, "failed", "No chunks created")
-                        stats["errors"] += 1
-                        continue
-
-                    logger.info(f"[PROCESS DONE] {len(chunks)} chunks in {time.time() - process_start:.2f}s")
-
                     # Embedding
                     embed_start = time.time()
-                    logger.info(f"[EMBED] Generating embeddings for: {file_path}")
+                    logger.info(f"[EMBED] Generating embeddings for {len(chunks)} chunks from: {file_path}")
                     embeddings = self.embeddings.embed_batch([c.content for c in chunks])
                     logger.info(f"[EMBED DONE] Completed in {time.time() - embed_start:.2f}s")
 
@@ -547,7 +600,7 @@ class FilesystemIndexer:
                     stats["documents_embedded"] += len(chunks)
 
                     logger.info(
-                        f"[FILE DONE] {file_path} | total_time={time.time() - file_start:.2f}s"
+                        f"[FILE DONE] {file_path} | processing_time={result.processing_time:.2f}s"
                     )
 
                     # Batch commit to balance persistence with performance
@@ -555,7 +608,7 @@ class FilesystemIndexer:
                         logger.debug(f"[CHECKPOINT] Committed progress for {stats['files_processed']} files")
 
                 except Exception as e:
-                    logger.exception(f"[ERROR] Failed processing {file_path}: {e}")
+                    logger.exception(f"[ERROR] Failed storing result for {file_path}: {e}")
                     self._mark_file_progress(conn, session_id, file_id, file_path, "failed", str(e))
                     stats["errors"] += 1
                     # Still commit progress on error to avoid reprocessing

@@ -13,6 +13,7 @@ A modular, maintainable Python-based skill for OpenWebUI/OpenClaw that enables f
 - **Flexible backends** - Choose between ChromaDB, Qdrant for vectors; Ollama, OpenAI for embeddings and LLMs
 - **CLI & API** - Both command-line and REST API interfaces
 - **Easy configuration** - Environment-based settings
+- **Parallel & distributed indexing** - Speed up indexing with multi-threading or remote workers
 
 ## 📋 Requirements
 
@@ -274,6 +275,26 @@ class CustomEmbeddings(EmbeddingsProvider):
 3. **Adjust semantic_weight** in hybrid search for your use case
 4. **Enable batch processing** for faster indexing
 5. **Use keyword search** for exact matches, semantic for intent
+6. **Enable parallel processing** for multi-core systems - up to 4x speedup!
+
+### Parallel & Distributed Indexing
+
+For large directories, enable parallel processing for significant speed improvements:
+
+```bash
+# Enable parallel processing with 4 workers (threads)
+PARALLEL_PROCESSING_ENABLED=true
+PARALLEL_WORKERS=4              # Recommended: 2x CPU cores
+PARALLEL_STRATEGY=threads
+
+# Or distribute across remote workers
+DISTRIBUTED_PROCESSING_ENABLED=true
+REMOTE_WORKER_URLS=http://worker1:8001,http://worker2:8002
+REMOTE_WORKER_TIMEOUT=30
+REMOTE_WORKER_RETRIES=2
+```
+
+See [PARALLEL_INDEXING.md](PARALLEL_INDEXING.md) for detailed configuration and examples.
 
 ## 🐛 Troubleshooting
 
