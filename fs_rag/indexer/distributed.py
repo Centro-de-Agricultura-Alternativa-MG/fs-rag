@@ -229,7 +229,6 @@ class RemoteWorkerStrategy(ProcessingStrategy):
                     file_id,
                     client,
                     len(files),
-                    process_file_func,
                     progress_callback,
                 )
                 future_to_item[future] = (idx, file_path, file_id)
@@ -281,7 +280,7 @@ class RemoteWorkerStrategy(ProcessingStrategy):
         fallback_func: Callable[[Path, Optional[Callable]], List[DocumentChunk]],
         progress_callback: Optional[Callable] = None,
     ) -> ProcessingResult:
-        """Process file with remote worker, with fallback to local processing."""
+        """Process file with remote worker only (no local fallback for distributed mode)."""
         file_start = time.time()
 
         self._log_file_progress(idx, total_files, file_path, "Sending to remote worker")
@@ -322,40 +321,18 @@ class RemoteWorkerStrategy(ProcessingStrategy):
                     processing_time=processing_time,
                 )
 
-            # Fallback to local processing if remote failed
-            self.logger.warning(
-                f"[DISTRIBUTED] Remote processing failed for {file_path}, falling back to local"
-            )
-
-            wrapped_callback = self._create_progress_callback(
-                progress_callback, idx, total_files
-            )
-            chunks = fallback_func(file_path, wrapped_callback)
-
-            if not chunks:
-                self._log_file_progress(idx, total_files, file_path, "No chunks created (local fallback)")
-                return ProcessingResult(
-                    file_path=file_path,
-                    chunks=[],
-                    file_id=file_id,
-                    status="failed",
-                    error_message="Remote worker failed and local fallback produced no chunks",
-                    processing_time=time.time() - file_start,
-                )
-
+            # DISTRIBUTED MODE: No fallback to local processing
+            # If remote worker fails, mark as failed (do not reprocess locally)
             processing_time = time.time() - file_start
             self._log_file_progress(
-                idx,
-                total_files,
-                file_path,
-                f"Local fallback completed ({len(chunks)} chunks, {processing_time:.2f}s)",
+                idx, total_files, file_path, "Remote worker failed (no local fallback in distributed mode)"
             )
-
             return ProcessingResult(
                 file_path=file_path,
-                chunks=chunks,
+                chunks=[],
                 file_id=file_id,
-                status="completed",
+                status="failed",
+                error_message="Remote worker failed - distributed mode does not use local fallback",
                 processing_time=processing_time,
             )
 
