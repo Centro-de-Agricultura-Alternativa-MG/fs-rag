@@ -217,6 +217,7 @@ class RemoteWorkerStrategy(ProcessingStrategy):
 
         with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
             future_to_item = {}
+            worker_index = 0
 
             for idx, file_path, file_id in work_items:
                 client = self.clients[worker_index % len(self.clients)]
