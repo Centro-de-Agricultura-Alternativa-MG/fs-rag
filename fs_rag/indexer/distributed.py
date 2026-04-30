@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from typing import Callable, Optional, List
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
@@ -34,6 +36,29 @@ class RemoteWorkerClient:
         self.timeout = timeout
         self.retries = retries
         self.logger = logger
+        self.session = self._create_session()
+
+    def _create_session(self) -> requests.Session:
+        """Create a requests session with connection pooling and retry strategy."""
+        session = requests.Session()
+        
+        retry_strategy = Retry(
+            total=self.retries,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["POST"]
+        )
+        
+        adapter = HTTPAdapter(
+            max_retries=retry_strategy,
+            pool_connections=4,
+            pool_maxsize=4
+        )
+        
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
+        return session
 
     def process_file(
         self, filepath: str, chunk_size: int, chunk_overlap: int
@@ -55,9 +80,10 @@ class RemoteWorkerClient:
             "chunk_overlap": chunk_overlap,
         }
 
-        for attempt in range(self.retries + 1):
+        attempt = 0
+        while attempt <= self.retries:
             try:
-                response = requests.post(
+                response = self.session.post(
                     endpoint, json=payload, timeout=self.timeout
                 )
                 response.raise_for_status()
@@ -77,16 +103,20 @@ class RemoteWorkerClient:
                     self.logger.warning(
                         f"Worker timeout for {filepath} (attempt {attempt + 1}/{self.retries + 1})"
                     )
-                if attempt == self.retries:
+                attempt += 1
+                if attempt > self.retries:
                     return None
+                time.sleep(min(2 ** attempt, 10))
 
             except requests.RequestException as e:
                 if self.logger:
                     self.logger.warning(
                         f"Worker request failed for {filepath} (attempt {attempt + 1}/{self.retries + 1}): {e}"
                     )
-                if attempt == self.retries:
+                attempt += 1
+                if attempt > self.retries:
                     return None
+                time.sleep(min(2 ** attempt, 10))
 
             except json.JSONDecodeError as e:
                 if self.logger:
@@ -176,9 +206,14 @@ class RemoteWorkerStrategy(ProcessingStrategy):
         # Add skipped results first
         results.extend(skipped_results)
 
-        # Round-robin distribution of workers
-        worker_index = 0
-        max_concurrent = len(self.clients) * 2  # Allow some queuing
+        # Calculate max concurrent workers respecting PARALLEL_WORKERS config
+        num_workers = len(self.clients)
+        base_workers = min(self.config.parallel_workers, 16)
+        max_concurrent = max(base_workers, num_workers * 2)
+
+        self.logger.info(
+            f"[DISTRIBUTED] Using {max_concurrent} concurrent workers ({num_workers} remote + {base_workers} config)"
+        )
 
         with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
             future_to_item = {}
@@ -199,12 +234,13 @@ class RemoteWorkerStrategy(ProcessingStrategy):
                 )
                 future_to_item[future] = (idx, file_path, file_id)
 
-            # Process completed tasks as they finish
-            for future in as_completed(future_to_item):
+            # Process completed tasks as they finish with timeout per batch
+            batch_timeout = self.config.remote_worker_timeout + 10
+            for future in as_completed(future_to_item, timeout=batch_timeout):
                 idx, file_path, file_id = future_to_item[future]
 
                 try:
-                    result = future.result()
+                    result = future.result(timeout=5)
                     results.append(result)
                     if result.status == "completed":
                         processed_count += 1
