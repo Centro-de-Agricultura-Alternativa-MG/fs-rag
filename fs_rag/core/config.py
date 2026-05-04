@@ -59,6 +59,7 @@ class Config(BaseSettings):
 
     # Indexing Configuration
     index_dir: Path = Path("./data/index")
+    logs_dir: Path = Path("./data/logs")
     index_batch_size: int = 32
     chunk_size: int = 512
     chunk_overlap: int = 50
@@ -98,6 +99,7 @@ class Config(BaseSettings):
         """Create necessary directories."""
         self.vector_db_path.mkdir(parents=True, exist_ok=True)
         self.index_dir.mkdir(parents=True, exist_ok=True)
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
         Path("./data").mkdir(parents=True, exist_ok=True)
 
 

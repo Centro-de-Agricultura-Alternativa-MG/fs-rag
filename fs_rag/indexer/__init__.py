@@ -5,6 +5,7 @@ from typing import Optional, Callable, List
 import sqlite3
 from datetime import datetime
 import time
+import json
 
 from fs_rag.core import get_config, get_logger
 from fs_rag.core.embeddings import get_embeddings_provider
@@ -16,7 +17,10 @@ from fs_rag.indexer.parallel import ThreadPoolStrategy, ProcessPoolStrategy
 from fs_rag.indexer.distributed import RemoteWorkerStrategy
 from fs_rag.core.config import ParallelStrategy
 
-logger = get_logger(__name__)
+# Initialize config early to set up logging
+config = get_config()
+config.ensure_dirs()
+logger = get_logger(__name__, level=config.log_level, log_file=config.logs_dir / "indexer.log")
 
 
 class FilesystemIndexer:
@@ -125,6 +129,20 @@ class FilesystemIndexer:
                 FOREIGN KEY (session_id) REFERENCES indexing_sessions(session_id)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS workflow_state (
+                session_id TEXT NOT NULL,
+                file_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                stage_status TEXT DEFAULT 'pending',
+                completed_at REAL,
+                data TEXT,
+                error_message TEXT,
+                PRIMARY KEY (session_id, file_id, stage),
+                FOREIGN KEY (session_id) REFERENCES indexing_sessions(session_id)
+            )
+        """)
         conn.commit()
         conn.close()
 
@@ -208,7 +226,6 @@ class FilesystemIndexer:
 
     def _load_directory_scan(self, conn: sqlite3.Connection, session_id: str) -> Optional[tuple[Path, list[Path]]]:
         """Load cached directory scan results from a previous session."""
-        import json
         cursor = conn.execute(
             "SELECT root_dir, file_paths FROM directory_scans WHERE session_id = ?",
             (session_id,)
@@ -221,6 +238,84 @@ class FilesystemIndexer:
         root_dir = Path(row[0])
         file_paths = [Path(p) for p in json.loads(row[1])]
         return (root_dir, file_paths)
+
+    def _save_workflow_state(
+        self, 
+        conn: sqlite3.Connection, 
+        session_id: str, 
+        file_id: str, 
+        file_path: Path, 
+        stage: str, 
+        status: str = "completed",
+        data: Optional[dict] = None,
+        error_message: Optional[str] = None
+    ) -> None:
+        """Save workflow state for a file at a specific processing stage.
+        
+        Stages: scanned, processed, embedded, stored, completed
+        Statuses: pending, in_progress, completed, failed
+        """
+        data_json = json.dumps(data) if data else None
+        conn.execute("""
+            INSERT OR REPLACE INTO workflow_state 
+            (session_id, file_id, file_path, stage, stage_status, completed_at, data, error_message) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (session_id, file_id, str(file_path), stage, status, datetime.now().timestamp(), data_json, error_message))
+        logger.debug(f"[WORKFLOW] Saved {stage} state for {file_id}: {status}")
+
+    def _load_workflow_state(
+        self, 
+        conn: sqlite3.Connection, 
+        session_id: str, 
+        file_id: str, 
+        stage: str
+    ) -> Optional[dict]:
+        """Load workflow state for a file at a specific stage."""
+        cursor = conn.execute(
+            "SELECT stage_status, data, error_message FROM workflow_state WHERE session_id = ? AND file_id = ? AND stage = ?",
+            (session_id, file_id, stage)
+        )
+        row = cursor.fetchone()
+        
+        if not row:
+            return None
+        
+        status, data_json, error_msg = row
+        return {
+            "status": status,
+            "data": json.loads(data_json) if data_json else None,
+            "error": error_msg
+        }
+
+    def _get_workflow_progress(self, conn: sqlite3.Connection, session_id: str, file_id: str) -> dict:
+        """Get the workflow progress for a file (which stages have been completed)."""
+        stages = ["scanned", "processed", "embedded", "stored", "completed"]
+        progress = {}
+        
+        cursor = conn.execute(
+            "SELECT stage, stage_status FROM workflow_state WHERE session_id = ? AND file_id = ?",
+            (session_id, file_id)
+        )
+        
+        for stage in stages:
+            progress[stage] = "pending"
+        
+        for row in cursor.fetchall():
+            stage, status = row
+            progress[stage] = status
+        
+        return progress
+
+    def _get_next_workflow_stage(self, workflow_progress: dict) -> Optional[str]:
+        """Get the next stage that needs processing based on current progress."""
+        stages = ["scanned", "processed", "embedded", "stored", "completed"]
+        
+        for stage in stages:
+            if workflow_progress.get(stage) != "completed":
+                return stage
+        
+        return None
+
 
     def _select_session_interactive(self, sessions: list[dict]) -> Optional[str]:
         """Allow user to select a session from available options interactively."""
@@ -493,81 +588,205 @@ class FilesystemIndexer:
         }
 
         try:
-            # Use strategy to process files in parallel/sequential/distributed manner
-            processing_results = self.strategy.process_files(
-                files=files,
-                file_hasher=self._get_file_hash,
-                process_file_func=self._process_file,
-                progress_callback=progress_callback,
-                skip_file_ids=completed_files,
-            )
-
-            # Process results and store in vector DB and metadata DB
-            for result in processing_results:
-                file_id = result.file_id
-                file_path = result.file_path
-
-                if result.skipped:
-                    logger.debug(f"[SKIPPED] {file_path}")
+            # Process files through complete pipeline with workflow state tracking
+            # Each file goes through: scanned → processed → embedded → stored → completed
+            # If interrupted, resumption continues from the last completed stage
+            
+            for idx, file_path in enumerate(files, start=1):
+                file_id = self._get_file_hash(file_path)
+                
+                logger.info(f"[FILE {idx}/{len(files)}] Processing: {file_path}")
+                
+                # Get current workflow progress for this file
+                workflow_progress = self._get_workflow_progress(conn, session_id, file_id)
+                
+                # Check if already fully completed
+                if workflow_progress.get("completed") == "completed":
+                    logger.debug(f"[SKIPPED] {file_path} (already completed in previous run)")
                     stats["skipped"] += 1
                     continue
-
-                if result.status == "failed":
-                    logger.error(f"[ERROR] Failed to process {file_path}: {result.error_message}")
-                    self._mark_file_progress(
-                        conn, session_id, file_id, file_path, "failed", result.error_message
-                    )
-                    stats["errors"] += 1
-                    # Batch commit for error handling
-                    if self._batch_commit(conn, batch_size=5, current_count=stats["errors"] + stats["files_processed"]):
-                        logger.debug(f"[CHECKPOINT] Committed after error")
-                    continue
-
-                # Process successful result
-                try:
-                    chunks = result.chunks
-
-                    if not chunks:
-                        logger.error(f"[ERROR] No chunks in result for: {file_path}")
-                        self._mark_file_progress(conn, session_id, file_id, file_path, "failed", "No chunks created")
+                
+                # Mark as scanned if not already
+                if workflow_progress.get("scanned") != "completed":
+                    try:
+                        logger.debug(f"[SCAN] {file_path}")
+                        self._save_workflow_state(conn, session_id, file_id, file_path, "scanned", "completed")
+                        conn.commit()
+                    except Exception as e:
+                        logger.error(f"[ERROR] Failed to mark scanned: {file_path}: {e}")
+                        self._save_workflow_state(conn, session_id, file_id, file_path, "scanned", "failed", error_message=str(e))
+                        conn.commit()
                         stats["errors"] += 1
                         continue
-
-                    # Check if already indexed globally
-                    logger.debug(f"[CHECK] Checking index status for: {file_path}")
-                    cursor = conn.execute("SELECT is_indexed FROM files WHERE id = ?", (file_id,))
-                    existing = cursor.fetchone()
-
-                    if existing and existing[0] and not force_reindex:
-                        logger.info(f"[SKIP] Already indexed globally: {file_path}")
-                        self._mark_file_progress(conn, session_id, file_id, file_path, "completed")
-                        stats["skipped"] += 1
+                
+                # Process file into chunks (only if not already processed)
+                chunks = None
+                if workflow_progress.get("processed") != "completed":
+                    try:
+                        logger.info(f"[PROCESS] {file_path}")
+                        process_start = time.time()
+                        
+                        wrapped_callback = None
+                        if progress_callback:
+                            wrapped_callback = lambda p, c, fp=file_path: progress_callback(fp, c)
+                        
+                        # Use strategy to process single file
+                        processing_results = self.strategy.process_files(
+                            files=[file_path],
+                            file_hasher=self._get_file_hash,
+                            process_file_func=self._process_file,
+                            progress_callback=wrapped_callback,
+                            skip_file_ids=set(),
+                        )
+                        
+                        if not processing_results:
+                            raise ValueError("No result returned from strategy")
+                        
+                        result = processing_results[0]
+                        
+                        if result.status == "failed":
+                            raise Exception(result.error_message or "Processing failed")
+                        
+                        chunks = result.chunks
+                        if not chunks:
+                            raise ValueError("No chunks created from file")
+                        
+                        process_time = time.time() - process_start
+                        logger.info(f"[PROCESS DONE] {file_path} ({len(chunks)} chunks, {process_time:.2f}s)")
+                        
+                        # Save processed state with chunks data
+                        self._save_workflow_state(
+                            conn, session_id, file_id, file_path, "processed", "completed",
+                            data={"chunk_count": len(chunks), "processing_time": process_time}
+                        )
+                        conn.commit()
+                        
+                    except Exception as e:
+                        logger.error(f"[ERROR] Failed to process {file_path}: {e}")
+                        self._save_workflow_state(conn, session_id, file_id, file_path, "processed", "failed", error_message=str(e))
+                        self._mark_file_progress(conn, session_id, file_id, file_path, "failed", str(e))
+                        conn.commit()
+                        stats["errors"] += 1
                         continue
-
-                    # Embedding
-                    embed_start = time.time()
-                    logger.info(f"[EMBED] Generating embeddings for {len(chunks)} chunks from: {file_path}")
-                    embeddings = self.embeddings.embed_batch([c.content for c in chunks])
-                    logger.info(f"[EMBED DONE] Completed in {time.time() - embed_start:.2f}s")
-
-                    # Store in vector DB
-                    store_start = time.time()
-                    logger.info(f"[STORE] Saving embeddings to vector DB for: {file_path}")
-
-                    chunk_ids = [f"{file_id}:{i}" for i in range(len(chunks))]
-                    self.vector_db.add(
-                        ids=chunk_ids,
-                        embeddings=embeddings,
-                        metadatas=[c.metadata for c in chunks],
-                        documents=[c.content for c in chunks]
-                    )
-
-                    logger.info(f"[STORE DONE] Stored in {time.time() - store_start:.2f}s")
-
-                    # Update metadata DB
+                else:
+                    # Load chunks from previous processing if not just processed
+                    try:
+                        logger.debug(f"[LOAD] Loading previously processed chunks for {file_path}")
+                        # For now, we need to reprocess to get chunks
+                        # In a real implementation, you'd serialize chunks to workflow_state.data
+                        wrapped_callback = None
+                        if progress_callback:
+                            wrapped_callback = lambda p, c, fp=file_path: progress_callback(fp, c)
+                        
+                        processing_results = self.strategy.process_files(
+                            files=[file_path],
+                            file_hasher=self._get_file_hash,
+                            process_file_func=self._process_file,
+                            progress_callback=wrapped_callback,
+                            skip_file_ids=set(),
+                        )
+                        
+                        if processing_results and processing_results[0].chunks:
+                            chunks = processing_results[0].chunks
+                        else:
+                            raise ValueError("Failed to load chunks")
+                    except Exception as e:
+                        logger.error(f"[ERROR] Failed to load chunks for {file_path}: {e}")
+                        self._save_workflow_state(conn, session_id, file_id, file_path, "processed", "failed", error_message=str(e))
+                        stats["errors"] += 1
+                        continue
+                
+                if not chunks:
+                    logger.error(f"[ERROR] No chunks available for {file_path}")
+                    stats["errors"] += 1
+                    continue
+                
+                # Check if already indexed globally
+                cursor = conn.execute("SELECT is_indexed FROM files WHERE id = ?", (file_id,))
+                existing = cursor.fetchone()
+                
+                if existing and existing[0] and not force_reindex:
+                    logger.info(f"[SKIP] Already indexed globally: {file_path}")
+                    self._save_workflow_state(conn, session_id, file_id, file_path, "completed", "completed")
+                    self._mark_file_progress(conn, session_id, file_id, file_path, "completed")
+                    conn.commit()
+                    stats["skipped"] += 1
+                    continue
+                
+                # Embedding (only if not already done)
+                embeddings = None
+                if workflow_progress.get("embedded") != "completed":
+                    try:
+                        logger.info(f"[EMBED] Generating embeddings for {len(chunks)} chunks from: {file_path}")
+                        embed_start = time.time()
+                        embeddings = self.embeddings.embed_batch([c.content for c in chunks])
+                        embed_time = time.time() - embed_start
+                        logger.info(f"[EMBED DONE] Completed in {embed_time:.2f}s")
+                        
+                        self._save_workflow_state(
+                            conn, session_id, file_id, file_path, "embedded", "completed",
+                            data={"embedding_count": len(embeddings), "embedding_time": embed_time}
+                        )
+                        conn.commit()
+                        
+                    except Exception as e:
+                        logger.error(f"[ERROR] Failed to embed {file_path}: {e}")
+                        self._save_workflow_state(conn, session_id, file_id, file_path, "embedded", "failed", error_message=str(e))
+                        self._mark_file_progress(conn, session_id, file_id, file_path, "failed", str(e))
+                        conn.commit()
+                        stats["errors"] += 1
+                        continue
+                else:
+                    # Need to get embeddings from previous run or recompute
+                    try:
+                        logger.debug(f"[LOAD EMBEDDINGS] {file_path}")
+                        embeddings = self.embeddings.embed_batch([c.content for c in chunks])
+                    except Exception as e:
+                        logger.error(f"[ERROR] Failed to load embeddings for {file_path}: {e}")
+                        stats["errors"] += 1
+                        continue
+                
+                if not embeddings:
+                    logger.error(f"[ERROR] No embeddings for {file_path}")
+                    stats["errors"] += 1
+                    continue
+                
+                # Store in vector DB (only if not already done)
+                if workflow_progress.get("stored") != "completed":
+                    try:
+                        store_start = time.time()
+                        logger.info(f"[STORE] Saving embeddings to vector DB for: {file_path}")
+                        
+                        chunk_ids = [f"{file_id}:{i}" for i in range(len(chunks))]
+                        self.vector_db.add(
+                            ids=chunk_ids,
+                            embeddings=embeddings,
+                            metadatas=[c.metadata for c in chunks],
+                            documents=[c.content for c in chunks]
+                        )
+                        
+                        store_time = time.time() - store_start
+                        logger.info(f"[STORE DONE] Stored in {store_time:.2f}s")
+                        
+                        self._save_workflow_state(
+                            conn, session_id, file_id, file_path, "stored", "completed",
+                            data={"chunk_ids_count": len(chunk_ids), "storage_time": store_time}
+                        )
+                        conn.commit()
+                        
+                    except Exception as e:
+                        logger.error(f"[ERROR] Failed to store {file_path}: {e}")
+                        self._save_workflow_state(conn, session_id, file_id, file_path, "stored", "failed", error_message=str(e))
+                        self._mark_file_progress(conn, session_id, file_id, file_path, "failed", str(e))
+                        conn.commit()
+                        stats["errors"] += 1
+                        continue
+                
+                # Update metadata DB
+                try:
                     db_start = time.time()
                     logger.debug(f"[DB] Updating metadata for: {file_path}")
-
+                    
                     cursor = conn.execute("SELECT id FROM files WHERE id = ?", (file_id,))
                     if cursor.fetchone():
                         conn.execute(
@@ -588,33 +807,32 @@ class FilesystemIndexer:
                                 file_id
                             )
                         )
-
-                    # Mark this file as completed in progress tracking
+                    
+                    # Mark file as completely done
                     self._mark_file_progress(conn, session_id, file_id, file_path, "completed")
-
+                    self._save_workflow_state(conn, session_id, file_id, file_path, "completed", "completed")
+                    
                     logger.debug(f"[DB DONE] Metadata updated in {time.time() - db_start:.2f}s")
-
+                    
                     # Stats
                     stats["files_processed"] += 1
                     stats["chunks_created"] += len(chunks)
                     stats["documents_embedded"] += len(chunks)
-
-                    logger.info(
-                        f"[FILE DONE] {file_path} | processing_time={result.processing_time:.2f}s"
-                    )
-
-                    # Batch commit to balance persistence with performance
+                    
+                    logger.info(f"[FILE DONE] {file_path} | {len(chunks)} chunks indexed")
+                    
+                    # Batch commit
                     if self._batch_commit(conn, batch_size=5, current_count=stats["files_processed"]):
                         logger.debug(f"[CHECKPOINT] Committed progress for {stats['files_processed']} files")
-
+                    else:
+                        conn.commit()
+                    
                 except Exception as e:
-                    logger.exception(f"[ERROR] Failed storing result for {file_path}: {e}")
+                    logger.exception(f"[ERROR] Failed updating metadata for {file_path}: {e}")
                     self._mark_file_progress(conn, session_id, file_id, file_path, "failed", str(e))
                     stats["errors"] += 1
-                    # Still commit progress on error to avoid reprocessing
-                    if self._batch_commit(conn, batch_size=5, current_count=stats["files_processed"] + stats["errors"]):
-                        logger.debug(f"[CHECKPOINT] Committed error state")
-
+                    conn.commit()
+            
             # Final commit
             conn.commit()
             self._end_indexing_session(conn, session_id, stats["errors"])
