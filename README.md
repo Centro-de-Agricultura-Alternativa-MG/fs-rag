@@ -1,10 +1,12 @@
 # FS-RAG: Filesystem Indexing & RAG-Powered Q&A
 
-A modular, maintainable Python-based skill for OpenWebUI/OpenClaw that enables fast filesystem indexing with semantic search and AI-powered question answering over document collections.
+A modular Python-based skill for OpenWebUI/OpenClaw that enables fast filesystem indexing with semantic search and AI-powered question answering over document collections.
 
-> ⚠️ **Disclaimer:** This project was developed with the assistance of LLM tools and GitHub Copilot.
+## Overview
 
-## 🎯 Features
+This project implements a complete Retrieval-Augmented Generation (RAG) pipeline for local document analysis. Index any directory, search across documents, and ask questions with AI-powered answers backed by source documents.
+
+## Features
 
 - **Recursive filesystem indexing** - Scan and index entire directory trees
 - **Multi-format support** - PDF, Word, Text, CSV, JSON, Markdown, Images
@@ -15,14 +17,14 @@ A modular, maintainable Python-based skill for OpenWebUI/OpenClaw that enables f
 - **Easy configuration** - Environment-based settings
 - **Parallel & distributed indexing** - Speed up indexing with multi-threading or remote workers
 
-## 📋 Requirements
+## Requirements
 
 - Python 3.9+
 - OpenWebUI or OpenClaw (for skill integration)
 - For local LLM: Ollama or LM Studio
 - For cloud LLM: OpenAI API key (optional)
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Setup
 
@@ -42,20 +44,18 @@ cd /path/to/fs-rag
 
 ### 2. Configure
 
-Edit `.env` with your settings:
+Edit `.env` with your settings. For a complete list of all configuration options, see the Configuration section below.
 
 ```bash
-# Choose embeddings provider (local or cloud)
-EMBEDDINGS_TYPE=ollama  # or openai
+# Basic example (local setup)
+EMBEDDINGS_TYPE=ollama
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=nomic-embed-text
 
-# Choose LLM (local or cloud)
-LLM_TYPE=ollama  # or openai
+LLM_TYPE=ollama
 OLLAMA_LLM_MODEL=mistral
 
-# Choose vector DB
-VECTOR_DB_TYPE=chromadb  # or qdrant
+VECTOR_DB_TYPE=chromadb
 ```
 
 ### 3. Index a Directory
@@ -91,7 +91,7 @@ python3 -m fs_rag.cli.main index /path/to/documents
 # Swagger docs: http://localhost:8000/docs
 ```
 
-## 📚 Usage Examples
+## Usage Examples
 
 ### CLI Usage
 
@@ -147,7 +147,7 @@ curl -X POST http://localhost:8000/ask \
 curl http://localhost:8000/stats
 ```
 
-## 🏗️ Architecture
+## Architecture
 
 ### Core Components
 
@@ -187,7 +187,7 @@ curl http://localhost:8000/stats
    - FastAPI REST server
    - OpenWebUI/OpenClaw integration
 
-## 📁 Supported Document Formats
+## Supported Document Formats
 
 - **Text**: `.txt`, `.md`, `.log`
 - **PDF**: `.pdf`
@@ -195,7 +195,7 @@ curl http://localhost:8000/stats
 - **Data**: `.csv`, `.json`
 - **Images**: `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp` (basic support)
 
-## ⚙️ Configuration
+## Configuration
 
 All configuration is handled via environment variables in `.env`:
 
@@ -234,7 +234,7 @@ DEBUG=false
 SKILL_PORT=8000
 ```
 
-## 🔧 Extending
+## Extending
 
 ### Add Custom Document Processor
 
@@ -268,7 +268,7 @@ class CustomEmbeddings(EmbeddingsProvider):
         return embeddings
 ```
 
-## 📊 Performance Tips
+## Performance Tips
 
 1. **Use Qdrant for large datasets** (>100k documents)
 2. **Tune chunk size** based on document type (smaller for dense text)
@@ -277,7 +277,7 @@ class CustomEmbeddings(EmbeddingsProvider):
 5. **Use keyword search** for exact matches, semantic for intent
 6. **Enable parallel processing** for multi-core systems - up to 4x speedup!
 
-### Parallel & Distributed Indexing
+## Parallel and Distributed Indexing
 
 For large directories, enable parallel processing for significant speed improvements:
 
@@ -296,7 +296,7 @@ REMOTE_WORKER_RETRIES=2
 
 See [PARALLEL_INDEXING.md](PARALLEL_INDEXING.md) for detailed configuration and examples.
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Ollama connection errors
 ```bash
@@ -327,13 +327,15 @@ CHUNK_SIZE=256
 tail -f ./data/logs
 ```
 
-## 📝 License
+## License
 
 This project is provided as-is for use with OpenWebUI/OpenClaw.
 
-## 🤝 Contributing
+## Contributing
 
-Contributions welcome! Areas for improvement:
+Contributions welcome! For guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Areas for improvement:
 - OCR for images (requires pytesseract)
 - Database full-text search index
 - Caching layer for repeated queries
@@ -341,10 +343,24 @@ Contributions welcome! Areas for improvement:
 - Document summarization
 - Batch question answering
 
-## 📞 Support
+## Support
 
 For issues or questions:
 1. Check `.env` configuration
 2. Review logs in console output
 3. Test components individually using CLI
 4. Check OpenWebUI documentation for skill integration
+
+## Documentation
+
+Additional documentation is available in the `docs/` directory:
+
+- **docs/INDEX.md** - Documentation navigation guide
+- **docs/QUICK_REFERENCE.md** - Quick command reference
+- **docs/INTEGRATION.md** - OpenWebUI/OpenClaw integration guide
+- **docs/PROJECT_SUMMARY.md** - Architecture overview
+- **docs/FILE_MANIFEST.md** - Detailed file listing
+- **docs/WORKER_GUIDE.md** - Remote worker setup guide
+- **docs/WORKFLOW_STATE_TRACKING.md** - Workflow state tracking details
+
+For contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
