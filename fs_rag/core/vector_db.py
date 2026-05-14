@@ -156,6 +156,9 @@ class QdrantVectorDB(VectorDB):
             )
 
     def add(self, ids: list[str], embeddings: list[np.ndarray], metadatas: list[dict], documents: list[str]) -> None:
+
+        qdrant_payload_max_size = 33554423
+
         if not self.client or not self.models:
             raise RuntimeError("Qdrant client not initialized")
 
@@ -181,9 +184,25 @@ class QdrantVectorDB(VectorDB):
                     payload=payload
                 )
             )
+        points_size = points.nbytes
 
-        self.client.upsert(collection_name=self.collection_name, points=points)
-        logger.debug(f"Added {len(ids)} documents to Qdrant")
+
+
+        if points_size > qdrant_payload_max_size:
+            bytes_per_row = points[0].nbytes  # size of one row (one vector)
+
+            max_rows_per_chunk = qdrant_payload_max_size // bytes_per_row
+
+            point_chunks = [
+                points[i:i + max_rows_per_chunk]
+                for i in range(0, len(points), max_rows_per_chunk)
+            ]
+        else:
+            point_chunks = [points]
+
+        for points in point_chunks:
+            self.client.upsert(collection_name=self.collection_name, points=points)
+            logger.debug(f"Added {len(ids)} documents to Qdrant")
 
     def search(self, embedding: np.ndarray, top_k: int = 5) -> list[dict]:
         if not self.client or not self.models:
