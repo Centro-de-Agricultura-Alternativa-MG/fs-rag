@@ -138,6 +138,8 @@ class RAGPipeline:
 
             document = normalize_text_compact(document)
 
+            document[:1200]
+
             context_parts.append(f"""O documento abaixo é o que obteve a maior pontuação na busca semântica, sendo classificado em primeiro lugar.
             ==========inicio===========
             {document}
