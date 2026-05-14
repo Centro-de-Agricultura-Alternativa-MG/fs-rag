@@ -40,6 +40,11 @@ class VectorDB(ABC):
         """Get total number of embeddings."""
         pass
 
+    @abstractmethod
+    def get_chunks_by_filepath(self, filepath: str) -> list[dict]:
+        """Get all chunks for a given filepath."""
+        pass
+
 
 class ChromaDBVectorDB(VectorDB):
     """ChromaDB implementation."""
@@ -122,6 +127,23 @@ class ChromaDBVectorDB(VectorDB):
         if not self.collection:
             return 0
         return self.collection.count()
+
+    def get_chunks_by_filepath(self, filepath: str) -> list[dict]:
+        if not self.collection:
+            raise RuntimeError("ChromaDB collection not initialized")
+        
+        results = self.collection.get(
+            where={"filepath": filepath}
+        )
+        
+        formatted_results = []
+        for i, doc_id in enumerate(results["ids"]):
+            formatted_results.append({
+                "id": doc_id,
+                "document": results["documents"][i] if results["documents"] else "",
+                "metadata": results["metadatas"][i] if results["metadatas"] else {},
+            })
+        return formatted_results
 
 
 class QdrantVectorDB(VectorDB):
@@ -275,6 +297,34 @@ class QdrantVectorDB(VectorDB):
             return collection_info.points_count
         except Exception:
             return 0
+
+    def get_chunks_by_filepath(self, filepath: str) -> list[dict]:
+        if not self.client or not self.models:
+            raise RuntimeError("Qdrant client not initialized")
+            
+        results = self.client.scroll(
+            collection_name=self.collection_name,
+            limit=10000,
+            scroll_filter=self.models.Filter(
+                must=[
+                    self.models.FieldCondition(
+                        key="file_path",  # ✅ FIX HERE
+                        match=self.models.MatchValue(value=filepath)
+                    )
+                ]
+            )
+        )
+        
+        formatted_results = []
+        if results[0]:
+            for result in results[0]:
+                formatted_results.append({
+                    "id": str(result.id),
+                    "document": result.payload.get("document", ""),
+                    "metadata": {k: v for k, v in result.payload.items() if k != "document"},
+                })
+
+        return formatted_results
 
 
 def get_vector_db() -> VectorDB:

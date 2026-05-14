@@ -8,6 +8,7 @@ from fs_rag.core.context_tree import format_context_with_tree
 from fs_rag.search import HybridSearchEngine, SearchResult
 from pathlib import Path
 import tiktoken
+from fs_rag.core.vector_db import get_vector_db
 config = get_config()
 
 import click
@@ -102,6 +103,7 @@ class RAGPipeline:
     def __init__(self, llm_type: Optional[str] = None):
         self.config = get_config()
         self.search_engine = HybridSearchEngine()
+        self.vector_db = get_vector_db()
 
         # Initialize LLM
         if llm_type is None:
@@ -120,6 +122,26 @@ class RAGPipeline:
         current_length = 0
         retrieved_files = []
 
+
+        if search_results:
+        
+            first = search_results[0]
+            file_path = first.metadata.get("file_path", "unknown")
+
+            chunks = self.vector_db.get_chunks_by_filepath(file_path)
+
+            document = "".join(
+                chunk.get("document", "")
+                for chunk in chunks
+            )
+
+            context_parts.append(f"""O documento abaixo é o que obteve a maior pontuação na busca semântica, sendo classificado em primeiro lugar.
+            ==========inicio===========
+            {document}
+            ==========fim===========
+            """)
+
+            
         for i, result in enumerate(search_results):
             file_path = result.metadata.get("file_path", "unknown")
             retrieved_files.append(file_path)
