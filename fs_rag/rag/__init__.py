@@ -10,6 +10,7 @@ from pathlib import Path
 import tiktoken
 from fs_rag.core.vector_db import get_vector_db
 config = get_config()
+from fs_rag.processor import normalize_text_compact
 
 import click
 from rich.console import Console
@@ -135,6 +136,8 @@ class RAGPipeline:
                 for chunk in chunks
             )
 
+            document = normalize_text_compact(document)
+
             context_parts.append(f"""O documento abaixo é o que obteve a maior pontuação na busca semântica, sendo classificado em primeiro lugar.
             ==========inicio===========
             {document}
@@ -145,7 +148,8 @@ class RAGPipeline:
         for i, result in enumerate(search_results):
             file_path = result.metadata.get("file_path", "unknown")
             retrieved_files.append(file_path)
-            snippet = f"{result.content} [CHUNK TRUNCADA]"
+            content = normalize_text_compact(result.content)
+            snippet = f"{content} [CHUNK TRUNCADA]"
             result_text = f"[Documento {i+1}: {file_path}]\n{snippet}\n"
 
             context_parts.append(result_text)

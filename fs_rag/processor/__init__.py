@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 import os
 load_dotenv()
 import subprocess
+import re
+import unicodedata
 
 from fs_rag.core import get_logger , get_config
 config = get_config()
@@ -39,6 +41,37 @@ def format_path(path):
             result += ch
     result += "  "
     return result
+
+
+def normalize_text_compact(text: str) -> str:
+    """
+    Aggressive normalization to reduce token usage:
+    - Removes /n, \n, extra whitespace
+    - Lowercases text
+    - Removes accents
+    - Removes most punctuation
+    - Keeps only letters, numbers, and single spaces
+    """
+
+    # Remove line breaks
+    text = text.replace("/n", " ")
+    text = re.sub(r"[\r\n]+", " ", text)
+
+    # Normalize accents (é -> e, ç -> c, etc.)
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("ascii")
+
+    # Lowercase
+    text = text.lower()
+
+    # Remove punctuation (keep only letters, numbers, spaces)
+    text = re.sub(r"[^a-z0-9\s]", "", text)
+
+    # Collapse all whitespace
+    text = re.sub(r"\s+", " ", text)
+
+    return text.strip()
+
 
 class DocumentProcessor(ABC):
     """Base class for document processors."""
