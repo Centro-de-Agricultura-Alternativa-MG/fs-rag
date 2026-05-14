@@ -1,51 +1,51 @@
-# Contribuindo
+# Contributing
 
-Obrigado por dedicar seu tempo para contribuir com este projeto!
+Thank you for taking the time to contribute to this project!
 
-## Relatando Bugs
+## Reporting Bugs
 
-Se você encontrar um erro, por favor abra uma **Issue** detalhando:
-- O comportamento atual
-- O comportamento esperado
-- Passos para reproduzir o problema
+If you find a bug, please open an **Issue** with details about:
+- Current behavior
+- Expected behavior
+- Steps to reproduce the problem
 
-## Fluxo de Trabalho (Workflow)
+## Workflow
 
-A branch mais atualizada do projeto é sempre a **`main`**. Todas as contribuições devem partir dela e os Pull Requests devem ser abertos contra a `main`.
+The most up-to-date branch in this project is always **`main`**. All contributions should start from it and Pull Requests should be opened against `main`.
 
-1. Faça um **Fork** do repositório
-2. Crie uma branch para sua modificação:
+1. **Fork** the repository
+2. Create a branch for your changes:
    ```bash
-   git checkout -b feature/nome-da-feature
+   git checkout -b feature/feature-name
    ```
-3. Realize suas alterações e faça o commit (veja a seção de commits abaixo)
-4. Envie sua branch para o seu fork:
+3. Make your changes and commit them (see the Commits section below)
+4. Push your branch to your fork:
    ```bash
-   git push origin feature/nome-da-feature
+   git push origin feature/feature-name
    ```
-5. Abra um **Pull Request (PR)** para a branch `main` do repositório original
+5. Open a **Pull Request (PR)** against the `main` branch of the original repository
 
-## Commits Semânticos
+## Semantic Commits
 
-Utilizamos o padrão de **Git Semântico (Conventional Commits)**. Seus commits devem seguir este formato:
+We use the **Semantic Commit (Conventional Commits)** standard. Your commits should follow this format:
 
-`tipo: descrição curta`
+`type: short description`
 
-**Tipos comuns:**
-- `feat`: Uma nova funcionalidade
-- `fix`: Correção de um bug
-- `docs`: Alterações na documentação
-- `style`: Alterações que não afetam o significado do código (espaços, formatação, etc)
-- `refactor`: Alteração de código que não corrige bug nem adiciona funcionalidade
-- `test`: Adição ou correção de testes
-- `chore`: Atualizações de tarefas de build, pacotes, etc
+**Common types:**
+- `feat`: A new feature
+- `fix`: A bug fix
+- `docs`: Documentation changes
+- `style`: Changes that don't affect code meaning (whitespace, formatting, etc)
+- `refactor`: Code changes that don't fix bugs or add features
+- `test`: Adding or updating tests
+- `chore`: Build task updates, packages, etc
 
-Exemplo: `feat: adiciona sistema de login`
+Example: `feat: add login system`
 
-## Requisitos para Pull Requests
+## Pull Request Requirements
 
-- O código deve ser legível e seguir os padrões do projeto
-- Descreva brevemente o que foi feito no PR
-- Certifique-se de que sua branch está atualizada com a `main` original antes de enviar
-- Para contribuições de código: execute os testes localmente e verifique se passam
-- Para contribuições de documentação: revise a formatação e clareza
+- Code must be readable and follow project standards
+- Briefly describe what was done in the PR
+- Ensure your branch is up to date with the original `main` before submitting
+- For code contributions: run tests locally and verify they pass
+- For documentation contributions: review formatting and clarity
