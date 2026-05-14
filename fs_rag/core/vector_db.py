@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional
 import numpy as np
+import json
+
 
 from fs_rag.core import get_config, get_logger
 
@@ -157,7 +159,7 @@ class QdrantVectorDB(VectorDB):
 
     def add(self, ids: list[str], embeddings: list[np.ndarray], metadatas: list[dict], documents: list[str]) -> None:
 
-        qdrant_payload_max_size = 33554423
+        qdrant_payload_max_size = 33554423  # ~32MB
 
         if not self.client or not self.models:
             raise RuntimeError("Qdrant client not initialized")
@@ -177,32 +179,47 @@ class QdrantVectorDB(VectorDB):
                 "document": documents[i],
                 **metadatas[i]
             }
-            points.append(
-                self.models.PointStruct(
-                    id=hash(doc_id) % (2**31),  # Use hash as numeric ID
-                    vector=vector,
-                    payload=payload
-                )
+
+            point = self.models.PointStruct(
+                id=hash(doc_id) % (2**31),
+                vector=vector,
+                payload=payload
             )
-        points_size = points.nbytes
+
+            points.append(point)
 
 
+        point_chunks = []
+        current_chunk = []
+        current_size = 0
 
-        if points_size > qdrant_payload_max_size:
-            bytes_per_row = points[0].nbytes  # size of one row (one vector)
+        for p in points:
+            # Convert to dict → JSON → bytes
+            p_dict = {
+                "id": p.id,
+                "vector": p.vector,
+                "payload": p.payload
+            }
 
-            max_rows_per_chunk = qdrant_payload_max_size // bytes_per_row
+            p_size = len(json.dumps(p_dict).encode("utf-8"))
 
-            point_chunks = [
-                points[i:i + max_rows_per_chunk]
-                for i in range(0, len(points), max_rows_per_chunk)
-            ]
-        else:
-            point_chunks = [points]
+            # If adding this point exceeds max size → start new chunk
+            if current_size + p_size > qdrant_payload_max_size:
+                point_chunks.append(current_chunk)
+                current_chunk = []
+                current_size = 0
 
-        for points in point_chunks:
-            self.client.upsert(collection_name=self.collection_name, points=points)
-            logger.debug(f"Added {len(ids)} documents to Qdrant")
+            current_chunk.append(p)
+            current_size += p_size
+
+        # Add last chunk
+        if current_chunk:
+            point_chunks.append(current_chunk)
+
+        # Upload chunks
+        for chunk in point_chunks:
+            self.client.upsert(collection_name=self.collection_name, points=chunk)
+            logger.debug(f"Added {len(chunk)} documents to Qdrant")
 
     def search(self, embedding: np.ndarray, top_k: int = 5) -> list[dict]:
         if not self.client or not self.models:
