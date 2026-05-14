@@ -149,8 +149,13 @@ class FilesystemIndexer:
     def _get_file_hash(self, file_path: Path) -> str:
         """Get a hash of file path and modified time."""
         import hashlib
-        stat = file_path.stat()
-        data = f"{file_path}:{stat.st_mtime}:{stat.st_size}".encode()
+        try:
+            stat = file_path.stat()
+            data = f"{file_path}:{stat.st_mtime}:{stat.st_size}".encode()
+        except (FileNotFoundError, OSError) as e:
+            # If file doesn't exist, use path only
+            logger.warning(f"File not found or inaccessible for hashing: {file_path} - {e}")
+            data = f"{file_path}:0:0".encode()
         return hashlib.md5(data).hexdigest()
 
     def _is_processable(self, file_path: Path) -> bool:
@@ -430,6 +435,11 @@ class FilesystemIndexer:
 
     def _process_file(self, file_path: Path, progress_callback: Optional[Callable] = None) -> list[DocumentChunk]:
         """Process a file and return chunks."""
+        # Check if file exists before processing
+        if not file_path.exists():
+            logger.warning(f"File not found, skipping: {file_path}")
+            return []
+        
         processor = ProcessorFactory.get_processor(file_path)
         if not processor:
             logger.debug(f"No processor found for {file_path}")
@@ -450,6 +460,10 @@ class FilesystemIndexer:
 
             chunks = []
             for i, chunk_text in enumerate(chunks_text):
+                try:
+                    file_size = file_path.stat().st_size
+                except (FileNotFoundError, OSError):
+                    file_size = 0
                 
                 chunk = DocumentChunk(
                     content=chunk_text,
@@ -459,7 +473,7 @@ class FilesystemIndexer:
                         "file_path": str(file_path),
                         "file_name": file_path.name,
                         "chunk_index": i,
-                        "file_size": file_path.stat().st_size,
+                        "file_size": file_size,
                     }
                 )
                 chunks.append(chunk)
@@ -640,16 +654,31 @@ class FilesystemIndexer:
                         )
                         
                         if not processing_results:
-                            raise ValueError("No result returned from strategy")
+                            logger.error(f"[ERROR] No result returned from strategy for {file_path}")
+                            self._save_workflow_state(conn, session_id, file_id, file_path, "processed", "failed", error_message="No result from strategy")
+                            self._mark_file_progress(conn, session_id, file_id, file_path, "failed", "No result from strategy")
+                            conn.commit()
+                            stats["errors"] += 1
+                            continue
                         
                         result = processing_results[0]
                         
                         if result.status == "failed":
-                            raise ValueError(result.error_message or "Processing failed")
+                            logger.warning(f"[ERROR] Processing failed for {file_path}: {result.error_message}")
+                            self._save_workflow_state(conn, session_id, file_id, file_path, "processed", "failed", error_message=result.error_message)
+                            self._mark_file_progress(conn, session_id, file_id, file_path, "failed", result.error_message or "Processing failed")
+                            conn.commit()
+                            stats["errors"] += 1
+                            continue
                         
                         chunks = result.chunks
                         if not chunks:
-                            raise ValueError("No chunks created from file")
+                            logger.warning(f"[ERROR] No chunks created from {file_path}")
+                            self._save_workflow_state(conn, session_id, file_id, file_path, "processed", "failed", error_message="No chunks created")
+                            self._mark_file_progress(conn, session_id, file_id, file_path, "failed", "No chunks created")
+                            conn.commit()
+                            stats["errors"] += 1
+                            continue
                         
                         process_time = time.time() - process_start
                         logger.info(f"[PROCESS DONE] {file_path} ({len(chunks)} chunks, {process_time:.2f}s)")
@@ -787,6 +816,23 @@ class FilesystemIndexer:
                     db_start = time.time()
                     logger.debug(f"[DB] Updating metadata for: {file_path}")
                     
+                    # Check if file still exists before accessing stats
+                    if not file_path.exists():
+                        logger.warning(f"[DB] File no longer exists, skipping metadata update: {file_path}")
+                        self._save_workflow_state(conn, session_id, file_id, file_path, "completed", "failed", 
+                                               error_message="File not found when updating metadata")
+                        stats["errors"] += 1
+                        conn.commit()
+                        continue
+                    
+                    try:
+                        file_size = file_path.stat().st_size
+                        file_mtime = file_path.stat().st_mtime
+                    except (FileNotFoundError, OSError) as e:
+                        logger.warning(f"[DB] Could not stat file {file_path}: {e}")
+                        file_size = 0
+                        file_mtime = datetime.now().timestamp()
+                    
                     cursor = conn.execute("SELECT id FROM files WHERE id = ?", (file_id,))
                     if cursor.fetchone():
                         conn.execute(
@@ -801,8 +847,8 @@ class FilesystemIndexer:
                             (
                                 file_id,
                                 str(file_path),
-                                file_path.stat().st_size,
-                                file_path.stat().st_mtime,
+                                file_size,
+                                file_mtime,
                                 datetime.now().timestamp(),
                                 file_id
                             )
