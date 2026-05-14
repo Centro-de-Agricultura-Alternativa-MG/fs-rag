@@ -645,7 +645,7 @@ class FilesystemIndexer:
                         result = processing_results[0]
                         
                         if result.status == "failed":
-                            raise Exception(result.error_message or "Processing failed")
+                            raise ValueError(result.error_message or "Processing failed")
                         
                         chunks = result.chunks
                         if not chunks:
