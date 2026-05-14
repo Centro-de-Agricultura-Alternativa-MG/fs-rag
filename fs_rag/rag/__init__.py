@@ -123,30 +123,7 @@ class RAGPipeline:
         current_length = 0
         retrieved_files = []
 
-
-        if search_results:
-        
-            first = search_results[0]
-            file_path = first.metadata.get("file_path", "unknown")
-
-            chunks = self.vector_db.get_chunks_by_filepath(file_path)
-
-            document = "".join(
-                chunk.get("document", "")
-                for chunk in chunks
-            )
-
-            document = normalize_text_compact(document)
-
-            document[:1200]
-
-            context_parts.append(f"""O documento abaixo é o que obteve a maior pontuação na busca semântica, sendo classificado em primeiro lugar.
-            ==========inicio===========
-            {document}
-            ==========fim===========
-            """)
-
-            
+ 
         for i, result in enumerate(search_results):
             file_path = result.metadata.get("file_path", "unknown")
             retrieved_files.append(file_path)
