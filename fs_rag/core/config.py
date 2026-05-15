@@ -85,6 +85,14 @@ class Config(BaseSettings):
     rag_search_optimizer: bool = True
     rag_optimizer_max_tokens: int = 32
 
+    # Knowledge Feedback Configuration
+    knowledge_feedback_enabled: bool = True
+    knowledge_feedback_min_usefulness_score: float = 0.7
+    knowledge_feedback_max_retrieval_results: int = 3
+    knowledge_feedback_async_processing: bool = True
+    knowledge_feedback_evaluator_max_tokens: int = 256
+    knowledge_feedback_score_multiplier: float = 1.5
+
     # Application Configuration
     log_level: str = "INFO"
     debug: bool = False

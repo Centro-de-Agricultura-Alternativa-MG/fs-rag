@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Optional
 import numpy as np
 import json
+from qdrant_client.models import Filter, FieldCondition, MatchValue
+
 
 
 from fs_rag.core import get_config, get_logger
@@ -23,6 +25,11 @@ class VectorDB(ABC):
     @abstractmethod
     def search(self, embedding: np.ndarray, top_k: int = 5) -> list[dict]:
         """Search for similar embeddings."""
+        pass
+
+    @abstractmethod
+    def search_source_type(self,embedding: np.ndarray, top_k: int = 5, source_type: str  = '') -> list[dict]:
+        """Search for similar embeddings by filepath"""
         pass
 
     @abstractmethod
@@ -261,6 +268,51 @@ class QdrantVectorDB(VectorDB):
                 "id": str(result.id),
                 "document": result.payload.get("document", ""),
                 "metadata": {k: v for k, v in result.payload.items() if k != "document"},
+                "distance": result.score,
+            })
+
+        return formatted_results
+
+    def search_source_type(
+        self,
+        embedding: np.ndarray,
+        top_k: int = 5,
+        source_type: str | None = None,
+    ) -> list[dict]:
+
+        if not self.client or not self.models:
+            raise RuntimeError("Qdrant client not initialized")
+
+        vector = embedding.tolist() if isinstance(embedding, np.ndarray) else embedding
+
+        must_conditions = [
+            FieldCondition(
+                key="source_type",
+                match=MatchValue(value=source_type)
+            )
+        ]
+
+
+        results = self.client.query_points(
+            collection_name=self.collection_name,
+            query=vector,
+            limit=top_k,
+            query_filter=Filter(
+                must=must_conditions
+            )
+        )
+
+        formatted_results = []
+
+        for result in results.points:
+            formatted_results.append({
+                "id": str(result.id),
+                "document": result.payload.get("document", ""),
+                "metadata": {
+                    k: v
+                    for k, v in result.payload.items()
+                    if k != "document"
+                },
                 "distance": result.score,
             })
 

@@ -125,7 +125,7 @@ class RAGPipeline:
 
  
         for i, result in enumerate(search_results):
-            file_path = result.metadata.get("file_path", "unknown")
+            file_path = result.metadata.get("file_path", "previous_knowledge_base_response")
             retrieved_files.append(file_path)
             content = normalize_text_compact(result.content)
             snippet = f"{content} [CHUNK TRUNCADA]"
@@ -293,6 +293,19 @@ class RAGPipeline:
                 }
                 for result in search_results
             ]
+
+        # Spawn async feedback processing (non-blocking)
+        try:
+            from fs_rag.feedback import KnowledgeFeedbackProcessor
+            processor = KnowledgeFeedbackProcessor()
+            processor.process_async(
+                question=question,
+                response=answer,
+                search_results=search_results,
+                context=context
+            )
+        except Exception as e:
+            logger.debug(f"Failed to spawn feedback processor: {e}")
 
         return response
 

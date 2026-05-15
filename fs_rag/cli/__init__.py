@@ -8,11 +8,13 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.markup import escape
+import time
 
 from fs_rag.core import get_config, get_logger
 from fs_rag.indexer import FilesystemIndexer
 from fs_rag.search import HybridSearchEngine
 from fs_rag.rag import get_rag_pipeline
+from fs_rag.cli.shutdown import graceful_exit
 
 logger = get_logger(__name__)
 console = Console()
@@ -48,15 +50,15 @@ def index(directory: Optional[str], force: bool, resume: Optional[str], interact
         # Validate arguments
         if resume and interactive:
             console.print("[red]Error:[/red] Cannot use both --resume and --interactive")
-            exit(1)
+            graceful_exit(1)
         
         if resume and directory:
             console.print("[red]Error:[/red] Cannot specify directory with --resume")
-            exit(1)
+            graceful_exit(1)
         
         if not resume and not interactive and not directory:
             console.print("[red]Error:[/red] Must specify DIRECTORY or use --resume/--interactive")
-            exit(1)
+            graceful_exit(1)
         
         # Handle resumption
         if resume:
@@ -84,7 +86,7 @@ Skipped: {stats.get('skipped', 0)}
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         logger.error(f"Indexing failed: {e}")
-        exit(1)
+        graceful_exit(1)
 
 
 @cli.command()
@@ -123,7 +125,7 @@ def sessions():
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         logger.error(f"Failed to list sessions: {e}")
-        exit(1)
+        graceful_exit(1)
     try:
         indexer = FilesystemIndexer()
         stats = indexer.get_index_stats()
@@ -140,7 +142,7 @@ def sessions():
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         logger.error(f"Failed to get stats: {e}")
-        exit(1)
+        graceful_exit(1)
 
 
 @cli.command()
@@ -169,7 +171,7 @@ def search(query: str, method: str, top_k: int):
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         logger.error(f"Search failed: {e}")
-        exit(1)
+        graceful_exit(1)
 
 
 @cli.command()
@@ -204,7 +206,7 @@ def ask(question: str, method: str, top_k: int, sources: bool):
     except Exception as e:
         console.print(f"[red]Error:[/red] {escape(str(e))}")
         logger.error(f"Question answering failed: {e}")
-        exit(1)
+        graceful_exit(1)
 
 
 @cli.command()
@@ -218,7 +220,7 @@ def clear():
         except Exception as e:
             console.print(f"[red]Error:[/red] {e}")
             logger.error(f"Clear failed: {e}")
-            exit(1)
+            graceful_exit(1)
 
 
 @cli.command()
@@ -239,7 +241,7 @@ def config():
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         logger.error(f"Failed to show config: {e}")
-        exit(1)
+        graceful_exit(1)
 
 
 if __name__ == "__main__":

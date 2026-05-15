@@ -85,8 +85,8 @@ class DocumentProcessor(ABC):
     def extract_text(self, file_path: Path) -> str:
         """Extract text from the document."""
         pass
-
-    def chunk_text(self, file_path: str,text: str, chunk_size: int = 512, chunk_overlap: int = 50) -> list[str]:
+    @staticmethod
+    def chunk_text( file_path: str,text: str, chunk_size: int = 512, chunk_overlap: int = 50) -> list[str]:
         """Split text into overlapping chunks."""
         chunks = []
         if len(text) <= chunk_size:

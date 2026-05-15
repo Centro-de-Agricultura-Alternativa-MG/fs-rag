@@ -95,14 +95,72 @@ class HybridSearchEngine:
 
         return results
 
+    def search_feedback_responses(self, query: str, top_k: int = 5) -> list[SearchResult]:
+        """Search for knowledge feedback responses (approved answers indexed as knowledge)."""
+        try:
+            query_embedding = self.embeddings.embed(query)
+        except Exception as e:
+            logger.error(f"Error embedding query for feedback search: {e}")
+            return []
+
+        try:
+            # Search in vector DB, filtering for feedback responses
+            vector_results = self.vector_db.search_source_type(query_embedding,  top_k=top_k  , source_type="knowledge_feedback")
+        except Exception as e:
+            logger.error(f"Error searching vector DB for feedback: {e}")
+            return []
+
+        print(vector_results)
+        results = []
+        for result in vector_results:
+            # Filter to only knowledge feedback responses
+            metadata = result.get("metadata", {})
+            if metadata.get("source_type") != "knowledge_feedback":
+                continue
+
+            # Convert distance to similarity score
+            similarity = 1.0 - (result["distance"] / 2.0) if result["distance"] > 1 else result["distance"]
+
+            results.append(SearchResult(
+                file_path="[Knowledge Feedback]",
+                content=result["document"],
+                metadata=metadata,
+                score=max(0, min(1, similarity))  # Normalize to [0, 1]
+            ))
+        print(results)
+        return results
+
     def hybrid_search(self, query: str, top_k: int = 5, semantic_weight: float = 0.7) -> list[SearchResult]:
-        """Combined keyword and semantic search with weighted scoring."""
+        """Combined keyword, semantic, and feedback search with weighted scoring."""
         keyword_results = self.keyword_search(query, top_k=top_k * 2)
         semantic_results = self.semantic_search(query, top_k=top_k * 2)
+        
+        # Include feedback responses with higher weight
+        feedback_results = []
+        if self.config.knowledge_feedback_enabled:
+            feedback_results = self.search_feedback_responses(
+                query, 
+                top_k=min(self.config.knowledge_feedback_max_retrieval_results, top_k)
+            )
 
         # Combine results by file path and content
         combined = {}
-
+        feedback_multiplier = self.config.knowledge_feedback_score_multiplier
+        print(feedback_results)
+        # Add feedback results with boost (highest priority)
+        for result in feedback_results:
+            key = (result.file_path, result.content[:100])
+            if key not in combined:
+                combined[key] = result
+                # Apply feedback boost and semantic weight
+                combined[key].score = result.score * semantic_weight * feedback_multiplier
+            else:
+                combined[key].score = max(
+                    combined[key].score,
+                    result.score * semantic_weight * feedback_multiplier
+                )
+        print('llllllllllllllllllllll')
+        print(combined)
         # Add semantic results
         for result in semantic_results:
             key = (result.file_path, result.content[:100])  # Use path + preview as key
