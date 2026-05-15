@@ -132,7 +132,11 @@ class ThreadPoolStrategy(ProcessingStrategy):
         total_files: int,
         progress_callback: Optional[Callable] = None,
     ) -> ProcessingResult:
-        """Process a single file (runs in thread pool)."""
+        """Process a single file (runs in thread pool).
+        
+        If distributed processing is enabled, attempts to use remote worker first,
+        then falls back to local processing if remote fails.
+        """
         file_start = time.time()
 
         self._log_file_progress(idx, total_files, file_path, "Processing")
@@ -143,8 +147,15 @@ class ThreadPoolStrategy(ProcessingStrategy):
                 progress_callback, idx, total_files
             )
 
-            # Process file
-            chunks = process_file_func(file_path, wrapped_callback)
+            # Try distributed processing first if enabled
+            chunks = None
+            if self._should_use_distributed():
+                self.logger.debug(f"[DISTRIBUTED] Attempting to process {file_path} with remote worker")
+                chunks = self._process_file_with_distributed(file_path, process_file_func, wrapped_callback)
+            
+            # Fall back to local processing if distributed failed or disabled
+            if chunks is None:
+                chunks = process_file_func(file_path, wrapped_callback)
 
             if not chunks:
                 self._log_file_progress(idx, total_files, file_path, "No chunks created")

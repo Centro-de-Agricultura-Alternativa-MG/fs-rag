@@ -14,7 +14,6 @@ from fs_rag.processor import ProcessorFactory, DocumentChunk
 from fs_rag.indexer.strategy import ProcessingStrategy
 from fs_rag.indexer.local import LocalSequentialStrategy
 from fs_rag.indexer.parallel import ThreadPoolStrategy, ProcessPoolStrategy
-from fs_rag.indexer.distributed import RemoteWorkerStrategy
 from fs_rag.core.config import ParallelStrategy
 
 # Initialize config early to set up logging
@@ -35,37 +34,39 @@ class FilesystemIndexer:
         self.strategy = self._create_strategy()
 
     def _create_strategy(self) -> ProcessingStrategy:
-        """Create appropriate processing strategy based on configuration.
+        """Create appropriate processing strategy based on PARALLEL_STRATEGY configuration.
+        
+        The strategy determines HOW files are dispatched (sequential, threads, processes).
+        The DISTRIBUTED_PROCESSING_ENABLED config determines WHERE they are processed (local or remote).
+        These are independent and work together.
         
         Returns:
             ProcessingStrategy instance
         """
-        # Check if a specific parallel strategy is requested (threads or processes)
+        # Determine strategy based on PARALLEL_STRATEGY (independent of distributed setting)
         if self.config.parallel_processing_enabled:
             if self.config.parallel_strategy == ParallelStrategy.PROCESSES:
-                logger.info("[STRATEGY] Using ProcessPoolStrategy (parallel processes)")
+                logger.info(
+                    "[STRATEGY] Using ProcessPoolStrategy (parallel processes). "
+                    f"Distributed workers: {'ENABLED' if self.config.distributed_processing_enabled else 'disabled'}"
+                )
                 return ProcessPoolStrategy(
                     self.config, self.embeddings, self.vector_db, logger
                 )
             elif self.config.parallel_strategy in (ParallelStrategy.THREADS, ParallelStrategy.ASYNC):
-                logger.info("[STRATEGY] Using ThreadPoolStrategy (parallel threads)")
+                logger.info(
+                    "[STRATEGY] Using ThreadPoolStrategy (parallel threads). "
+                    f"Distributed workers: {'ENABLED' if self.config.distributed_processing_enabled else 'disabled'}"
+                )
                 return ThreadPoolStrategy(
                     self.config, self.embeddings, self.vector_db, logger
                 )
 
-        # Check if distributed processing is enabled (only when sequential or parallel_processing_disabled)
-        if self.config.distributed_processing_enabled:
-            logger.info("[STRATEGY] Using RemoteWorkerStrategy (distributed)")
-            try:
-                return RemoteWorkerStrategy(
-                    self.config, self.embeddings, self.vector_db, logger
-                )
-            except (ValueError, Exception) as e:
-                logger.warning(f"[STRATEGY] Failed to initialize distributed strategy: {e}")
-                logger.info("[STRATEGY] Falling back to sequential strategy")
-
         # Default to sequential processing
-        logger.info("[STRATEGY] Using LocalSequentialStrategy (sequential)")
+        logger.info(
+            "[STRATEGY] Using LocalSequentialStrategy (sequential). "
+            f"Distributed workers: {'ENABLED' if self.config.distributed_processing_enabled else 'disabled'}"
+        )
         return LocalSequentialStrategy(
             self.config, self.embeddings, self.vector_db, logger
         )

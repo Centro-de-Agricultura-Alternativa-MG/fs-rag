@@ -28,7 +28,10 @@ class ProcessingStrategy(ABC):
     Strategies differ in parallelism approach:
     - Sequential: Process files one at a time (original behavior)
     - Parallel (threads/processes): Process multiple files concurrently
-    - Distributed: Delegate to remote workers
+    
+    Distributed processing (remote workers) is independent and works with any strategy.
+    When DISTRIBUTED_PROCESSING_ENABLED=true, the strategy will use remote workers
+    for the actual file processing, while maintaining the same dispatch method.
     """
 
     def __init__(self, config, embeddings, vector_db, logger):
@@ -44,6 +47,33 @@ class ProcessingStrategy(ABC):
         self.embeddings = embeddings
         self.vector_db = vector_db
         self.logger = logger
+        self._remote_worker_client = None
+        self._init_distributed_client()
+
+    def _init_distributed_client(self):
+        """Initialize distributed client if distributed processing is enabled."""
+        if not self.config.distributed_processing_enabled:
+            return
+        
+        try:
+            from fs_rag.indexer.distributed import RemoteWorkerClient
+            # For now, use the first worker URL if multiple are configured
+            urls = [url.strip() for url in self.config.remote_worker_urls.split(",") if url.strip()]
+            if urls:
+                self._remote_worker_client = RemoteWorkerClient(
+                    urls[0],
+                    timeout=self.config.remote_worker_timeout,
+                    retries=self.config.remote_worker_retries,
+                    logger=self.logger,
+                )
+                self.logger.info(f"[DISTRIBUTED] Initialized remote worker client: {urls[0]}")
+        except (ImportError, Exception) as e:
+            self.logger.warning(f"[DISTRIBUTED] Failed to initialize remote worker client: {e}")
+            self._remote_worker_client = None
+
+    def _should_use_distributed(self) -> bool:
+        """Check if distributed processing is enabled and client is available."""
+        return self.config.distributed_processing_enabled and self._remote_worker_client is not None
 
     @abstractmethod
     def process_files(
@@ -67,6 +97,48 @@ class ProcessingStrategy(ABC):
             List of ProcessingResult objects
         """
         pass
+
+    def _process_file_with_distributed(
+        self, 
+        file_path: Path,
+        local_process_func: Callable[[Path, Optional[Callable]], List[DocumentChunk]],
+        progress_callback: Optional[Callable] = None
+    ) -> Optional[List[DocumentChunk]]:
+        """Process a single file using distributed worker if available.
+        
+        Args:
+            file_path: Path to file to process
+            local_process_func: Local fallback processing function
+            progress_callback: Optional progress callback
+        
+        Returns:
+            List of chunks or None if distributed processing failed
+        """
+        if not self._should_use_distributed():
+            return None
+        
+        try:
+            chunks_data = self._remote_worker_client.process_file(
+                str(file_path),
+                chunk_size=self.config.chunk_size,
+                chunk_overlap=self.config.chunk_overlap,
+            )
+            
+            if chunks_data:
+                self.logger.debug(f"[DISTRIBUTED] Successfully processed {file_path} with remote worker")
+                # Convert chunk dicts back to DocumentChunk objects
+                chunks = [
+                    DocumentChunk(
+                        content=chunk_data.get("content", ""),
+                        metadata=chunk_data.get("metadata", {}),
+                    )
+                    for chunk_data in chunks_data
+                ]
+                return chunks
+        except Exception as e:
+            self.logger.debug(f"[DISTRIBUTED] Remote worker processing failed for {file_path}: {e}")
+        
+        return None
 
     def _create_progress_callback(
         self,

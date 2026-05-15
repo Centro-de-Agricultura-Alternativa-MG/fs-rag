@@ -52,8 +52,15 @@ class LocalSequentialStrategy(ProcessingStrategy):
                     progress_callback, idx, len(files)
                 )
 
-                # Process file
-                chunks = process_file_func(file_path, wrapped_callback)
+                # Try distributed processing first if enabled
+                chunks = None
+                if self._should_use_distributed():
+                    self.logger.debug(f"[DISTRIBUTED] Attempting to process {file_path} with remote worker")
+                    chunks = self._process_file_with_distributed(file_path, process_file_func, wrapped_callback)
+                
+                # Fall back to local processing if distributed failed or disabled
+                if chunks is None:
+                    chunks = process_file_func(file_path, wrapped_callback)
 
                 if not chunks:
                     self._log_file_progress(idx, len(files), file_path, "No chunks created")
