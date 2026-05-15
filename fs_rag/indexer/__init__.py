@@ -40,29 +40,29 @@ class FilesystemIndexer:
         Returns:
             ProcessingStrategy instance
         """
-        # Check if distributed processing is enabled
-        if self.config.distributed_processing_enabled:
-            logger.info("[STRATEGY] Using RemoteWorkerStrategy (distributed)")
-            try:
-                return RemoteWorkerStrategy(
-                    self.config, self.embeddings, self.vector_db, logger
-                )
-            except ValueError as e:
-                logger.warning(f"[STRATEGY] Failed to initialize distributed strategy: {e}")
-                logger.info("[STRATEGY] Falling back to parallel strategy")
-
-        # Check if parallel processing is enabled
+        # Check if a specific parallel strategy is requested (threads or processes)
         if self.config.parallel_processing_enabled:
             if self.config.parallel_strategy == ParallelStrategy.PROCESSES:
                 logger.info("[STRATEGY] Using ProcessPoolStrategy (parallel processes)")
                 return ProcessPoolStrategy(
                     self.config, self.embeddings, self.vector_db, logger
                 )
-            else:  # threads or async (we use threads for now)
+            elif self.config.parallel_strategy in (ParallelStrategy.THREADS, ParallelStrategy.ASYNC):
                 logger.info("[STRATEGY] Using ThreadPoolStrategy (parallel threads)")
                 return ThreadPoolStrategy(
                     self.config, self.embeddings, self.vector_db, logger
                 )
+
+        # Check if distributed processing is enabled (only when sequential or parallel_processing_disabled)
+        if self.config.distributed_processing_enabled:
+            logger.info("[STRATEGY] Using RemoteWorkerStrategy (distributed)")
+            try:
+                return RemoteWorkerStrategy(
+                    self.config, self.embeddings, self.vector_db, logger
+                )
+            except (ValueError, Exception) as e:
+                logger.warning(f"[STRATEGY] Failed to initialize distributed strategy: {e}")
+                logger.info("[STRATEGY] Falling back to sequential strategy")
 
         # Default to sequential processing
         logger.info("[STRATEGY] Using LocalSequentialStrategy (sequential)")
